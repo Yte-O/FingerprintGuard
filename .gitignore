@@ -1,0 +1,7 @@
+node_modules/
+hook-dll/build/
+gui_config.json
+instances.json
+fg_*.json
+*.log
+.DS_Store

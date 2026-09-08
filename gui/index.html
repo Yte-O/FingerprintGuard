@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FingerprintGuard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        /* ================================================================
+           FingerprintGuard — Premium Dark UI
+           ================================================================ */
+
+        :root {
+            --bg-primary:     #0a0a0f;
+            --bg-secondary:   #12121a;
+            --bg-card:        #16162280;
+            --bg-input:       #1a1a2680;
+            --bg-hover:       #1e1e2e;
+            --border:         #2a2a3a;
+            --border-focus:   #6366f1;
+            --text-primary:   #e8e8f0;
+            --text-secondary: #8888a0;
+            --text-muted:     #55556a;
+            --accent:         #6366f1;
+            --accent-glow:    #6366f140;
+            --accent-hover:   #7c7ff7;
+            --success:        #22c55e;
+            --success-bg:     #22c55e18;
+            --warning:        #f59e0b;
+            --warning-bg:     #f59e0b18;
+            --danger:         #ef4444;
+            --danger-bg:      #ef444418;
+            --gradient-1:     linear-gradient(135deg, #6366f1, #8b5cf6);
+            --gradient-2:     linear-gradient(135deg, #6366f1, #06b6d4);
+            --shadow-sm:      0 2px 8px rgba(0,0,0,0.3);
+            --shadow-md:      0 4px 20px rgba(0,0,0,0.4);
+            --shadow-glow:    0 0 30px var(--accent-glow);
+            --radius:         12px;
+            --radius-sm:      8px;
+            --transition:     all 0.2s ease;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Background gradient mesh */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background:
+                radial-gradient(circle at 20% 20%, #6366f108 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, #8b5cf608 0%, transparent 50%),
+                radial-gradient(circle at 50% 50%, #06b6d405 0%, transparent 50%);
+            animation: bgShift 20s ease-in-out infinite;
+            z-index: -1;
+        }
+
+        @keyframes bgShift {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            33% { transform: translate(-2%, 2%) rotate(1deg); }
+            66% { transform: translate(2%, -1%) rotate(-1deg); }
+        }
+
+        /* ---- Header ---- */
+        .header {
+            padding: 24px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(20px);
+            background: var(--bg-secondary);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 40px; height: 40px;
+            background: var(--gradient-1);
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .logo h1 {
+            font-size: 20px;
+            font-weight: 700;
+            background: var(--gradient-2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-version {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-left: -4px;
+        }
+
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* ---- Main Layout ---- */
+        .main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 32px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        /* ---- Card ---- */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            backdrop-filter: blur(20px);
+            transition: var(--transition);
+        }
+
+        .card:hover {
+            border-color: #3a3a4a;
+        }
+
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-title .icon { font-size: 16px; }
+
+        /* ---- Form Elements ---- */
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            letter-spacing: 0.3px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            transition: var(--transition);
+            outline: none;
+        }
+
+        .form-input:focus {
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .form-row > * { flex: 1; }
+
+        /* ---- Select (Custom) ---- */
+        .form-select {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            transition: var(--transition);
+            outline: none;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238888a0' viewBox='0 0 16 16'%3E%3Cpath d='M1.5 5.5l6.5 6.5 6.5-6.5'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
+
+        .form-select:focus {
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .form-select option {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        /* ---- Country Grid ---- */
+        .country-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+
+        .country-btn {
+            padding: 10px 8px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            text-align: center;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .country-btn:hover {
+            border-color: var(--accent);
+            color: var(--text-primary);
+            background: var(--bg-hover);
+        }
+
+        .country-btn.active {
+            border-color: var(--accent);
+            background: var(--accent-glow);
+            color: #fff;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .country-btn .flag {
+            font-size: 20px;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        /* ---- Buttons ---- */
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--gradient-1);
+            color: white;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 0 40px var(--accent-glow);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            background: var(--bg-hover);
+        }
+
+        .btn-danger {
+            background: var(--danger-bg);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+        }
+
+        .btn-danger:hover {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .btn-full {
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        /* ---- IP Detection Card ---- */
+        .ip-info {
+            padding: 16px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            line-height: 1.8;
+        }
+
+        .ip-info .label {
+            color: var(--text-muted);
+            display: inline-block;
+            width: 80px;
+        }
+
+        .ip-info .value {
+            color: var(--text-primary);
+        }
+
+        .ip-info .value.match { color: var(--success); }
+        .ip-info .value.mismatch { color: var(--warning); }
+
+        /* ---- Fingerprint Preview ---- */
+        .fingerprint-preview {
+            margin-top: 16px;
+            padding: 16px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+        }
+
+        .fp-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #1e1e2a;
+            font-size: 12px;
+        }
+
+        .fp-row:last-child { border-bottom: none; }
+
+        .fp-key {
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .fp-val {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        /* ---- Instance List ---- */
+        .instance-list {
+            grid-column: 1 / -1;
+        }
+
+        .instance-item {
+            display: grid;
+            grid-template-columns: auto 1fr auto auto auto;
+            gap: 16px;
+            align-items: center;
+            padding: 14px 16px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            margin-bottom: 8px;
+            transition: var(--transition);
+        }
+
+        .instance-item:hover {
+            border-color: #3a3a4a;
+        }
+
+        .inst-status {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+        }
+
+        .inst-status.running {
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+
+        .inst-status.stopped {
+            background: var(--text-muted);
+        }
+
+        .inst-status.error {
+            background: var(--danger);
+            box-shadow: 0 0 8px var(--danger);
+        }
+
+        .inst-info { font-size: 13px; }
+        .inst-info .inst-target {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .inst-info .inst-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .inst-country {
+            font-size: 20px;
+        }
+
+        .inst-proxy {
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-secondary);
+            padding: 4px 8px;
+            background: var(--bg-primary);
+            border-radius: 4px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+
+        /* ---- Snackbar ---- */
+        .snackbar {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            padding: 12px 24px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            font-size: 13px;
+            box-shadow: var(--shadow-md);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .snackbar.show {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .snackbar.success { border-color: var(--success); }
+        .snackbar.error { border-color: var(--danger); }
+
+        /* ---- Loading Spinner ---- */
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            display: inline-block;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 800px) {
+            .main {
+                grid-template-columns: 1fr;
+                padding: 16px;
+            }
+            .country-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="logo">
+        <div class="logo-icon">🛡️</div>
+        <div>
+            <h1>FingerprintGuard</h1>
+            <span class="logo-version">v1.0</span>
+        </div>
+    </div>
+    <div class="header-status">
+        <div class="status-dot"></div>
+        <span style="color: var(--text-secondary); font-size: 13px;">System Ready</span>
+    </div>
+</header>
+
+<!-- Main Content -->
+<main class="main">
+
+    <!-- Left Column: Launch Config -->
+    <div class="card" id="launch-card">
+        <div class="card-title"><span class="icon">🚀</span> 启动配置</div>
+
+        <div class="form-group">
+            <label class="form-label">目标应用程序</label>
+            <div class="form-row">
+                <input type="text" class="form-input" id="target-path"
+                       placeholder="C:\path\to\app.exe" style="flex: 3;">
+                <button class="btn btn-secondary btn-sm" onclick="browseTarget()" style="flex: 0 0 auto;">
+                    📁 浏览
+                </button>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">SOCKS5 / HTTP 代理 (可选)</label>
+            <div class="form-row" style="margin-bottom: 8px;">
+                <input type="text" class="form-input" id="proxy-host" placeholder="Host (e.g. 127.0.0.1)" style="flex: 2;">
+                <input type="text" class="form-input" id="proxy-port" placeholder="Port" style="flex: 1;">
+            </div>
+            <div class="form-row">
+                <input type="text" class="form-input" id="proxy-user" placeholder="用户名 (可选)">
+                <input type="password" class="form-input" id="proxy-pass" placeholder="密码 (可选)">
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px;">
+                带密码的代理将自动启动本地无密中转服务以适配 Chromium。
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">选择国家/地区</label>
+            <div class="country-grid" id="country-grid">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <button class="btn btn-primary btn-full" id="launch-btn" onclick="launchApp()">
+            ▶ 启动应用
+        </button>
+
+        <div class="form-row" style="margin-top: 8px;">
+            <button class="btn btn-secondary btn-sm btn-full" onclick="detectAndLaunch()">
+                🌐 自动检测 IP 并启动
+            </button>
+        </div>
+    </div>
+
+    <!-- Right Column: Fingerprint Preview + IP Info -->
+    <div>
+        <!-- IP Detection -->
+        <div class="card" style="margin-bottom: 24px;">
+            <div class="card-title"><span class="icon">🌍</span> IP 地理定位</div>
+            <div class="ip-info" id="ip-info">
+                <div><span class="label">状态</span><span class="value" style="color: var(--text-muted);">点击下方按钮检测</span></div>
+            </div>
+            <button class="btn btn-secondary btn-sm btn-full" id="detect-ip-btn" onclick="detectIP()">
+                🔍 检测出口 IP
+            </button>
+        </div>
+
+        <!-- Fingerprint Preview -->
+        <div class="card">
+            <div class="card-title"><span class="icon">🔐</span> 指纹预览</div>
+            <div class="fingerprint-preview" id="fp-preview">
+                <div class="fp-row"><span class="fp-key">选择一个国家查看指纹</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Instance List (Full Width) -->
+    <div class="card instance-list">
+        <div class="card-title"><span class="icon">📋</span> 运行中的实例</div>
+        <div id="instance-list">
+            <div class="empty-state">
+                <div class="icon">🛡️</div>
+                <div>暂无运行中的实例</div>
+                <div style="margin-top: 4px; font-size: 12px;">配置并启动一个应用开始使用</div>
+            </div>
+        </div>
+    </div>
+
+</main>
+
+<!-- Snackbar -->
+<div class="snackbar" id="snackbar"></div>
+
+<script>
+    // ================================================================
+    // FingerprintGuard — GUI Frontend
+    // ================================================================
+
+    const API = '';  // Same origin
+
+    const FLAGS = {
+        JP: '🇯🇵', US: '🇺🇸', KR: '🇰🇷', CN: '🇨🇳', TW: '🇹🇼',
+        GB: '🇬🇧', DE: '🇩🇪', FR: '🇫🇷', RU: '🇷🇺', BR: '🇧🇷',
+        IN: '🇮🇳', AU: '🇦🇺'
+    };
+
+    let profiles = [];
+    let selectedCountry = null;
+
+    // ---- Init ----
+    async function init() {
+        // Load profiles
+        try {
+            profiles = await fetch(`${API}/api/profiles`).then(r => r.json());
+            renderCountryGrid();
+        } catch (e) {
+            showSnackbar('无法连接到服务器', 'error');
+        }
+
+        // Load saved config
+        try {
+            const cfg = await fetch(`${API}/api/config`).then(r => r.json());
+            if (cfg.lastTarget) document.getElementById('target-path').value = cfg.lastTarget;
+            if (cfg.lastProxyHost) document.getElementById('proxy-host').value = cfg.lastProxyHost;
+            if (cfg.lastProxyPort) document.getElementById('proxy-port').value = cfg.lastProxyPort;
+            if (cfg.lastProxyUser) document.getElementById('proxy-user').value = cfg.lastProxyUser;
+            if (cfg.lastProxyPass) document.getElementById('proxy-pass').value = cfg.lastProxyPass;
+            if (cfg.lastCountry) selectCountry(cfg.lastCountry);
+        } catch {}
+
+        // Load instances
+        refreshInstances();
+        setInterval(refreshInstances, 2000);
+    }
+
+    // ---- Country Grid ----
+    function renderCountryGrid() {
+        const grid = document.getElementById('country-grid');
+        grid.innerHTML = '';
+
+        for (const p of profiles) {
+            const btn = document.createElement('button');
+            btn.className = 'country-btn';
+            btn.id = `country-${p.code}`;
+            btn.innerHTML = `<span class="flag">${FLAGS[p.code] || '🏳️'}</span>${p.code}`;
+            btn.title = `${p.name}\n${p.timezone}\n${p.locale}`;
+            btn.onclick = () => selectCountry(p.code);
+            grid.appendChild(btn);
+        }
+    }
+
+    function selectCountry(code) {
+        // Deselect all
+        document.querySelectorAll('.country-btn').forEach(b => b.classList.remove('active'));
+
+        // Select this one
+        const btn = document.getElementById(`country-${code}`);
+        if (btn) btn.classList.add('active');
+        selectedCountry = code;
+
+        // Update fingerprint preview
+        const p = profiles.find(x => x.code === code);
+        if (p) updateFPPreview(p);
+    }
+
+    function updateFPPreview(profile) {
+        const el = document.getElementById('fp-preview');
+        el.innerHTML = `
+            <div class="fp-row"><span class="fp-key">country</span><span class="fp-val">${FLAGS[profile.code] || ''} ${profile.name}</span></div>
+            <div class="fp-row"><span class="fp-key">timezone</span><span class="fp-val">${profile.timezone}</span></div>
+            <div class="fp-row"><span class="fp-key">locale</span><span class="fp-val">${profile.locale}</span></div>
+            <div class="fp-row"><span class="fp-key">languages</span><span class="fp-val">${profile.languages.join(', ')}</span></div>
+        `;
+    }
+
+    // ---- IP Detection ----
+    async function detectIP() {
+        const btn = document.getElementById('detect-ip-btn');
+        const info = document.getElementById('ip-info');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> 检测中...';
+
+        try {
+            const data = await fetch(`${API}/api/detect-ip`).then(r => r.json());
+
+            if (data.error) {
+                info.innerHTML = `<div><span class="label">错误</span><span class="value" style="color:var(--danger);">${data.error}</span></div>`;
+            } else {
+                const hasProfile = profiles.some(p => p.code === data.countryCode);
+                info.innerHTML = `
+                    <div><span class="label">IP</span><span class="value">${data.ip}</span></div>
+                    <div><span class="label">位置</span><span class="value">${data.city || '?'}, ${data.country || '?'}</span></div>
+                    <div><span class="label">国家代码</span><span class="value ${hasProfile ? 'match' : 'mismatch'}">${data.countryCode || '?'} ${hasProfile ? '✅ 有对应模板' : '⚠️ 无对应模板'}</span></div>
+                    <div><span class="label">时区</span><span class="value">${data.timezone || '?'}</span></div>
+                    <div><span class="label">ISP</span><span class="value">${data.isp || '?'}</span></div>
+                `;
+
+                // Auto-select matching country
+                if (hasProfile) {
+                    selectCountry(data.countryCode);
+                    showSnackbar(`已自动匹配: ${FLAGS[data.countryCode] || ''} ${data.countryCode}`, 'success');
+                }
+            }
+        } catch (e) {
+            info.innerHTML = `<div><span class="label">错误</span><span class="value" style="color:var(--danger);">网络错误</span></div>`;
+        }
+
+        btn.disabled = false;
+        btn.innerHTML = '🔍 检测出口 IP';
+    }
+
+    // ---- Launch ----
+    async function launchApp() {
+        const target = document.getElementById('target-path').value.trim();
+        const proxyHost = document.getElementById('proxy-host').value.trim();
+        const proxyPort = document.getElementById('proxy-port').value.trim();
+        const proxyUser = document.getElementById('proxy-user').value.trim();
+        const proxyPass = document.getElementById('proxy-pass').value.trim();
+
+        if (!target) {
+            showSnackbar('请输入目标应用路径', 'error');
+            return;
+        }
+        if (!selectedCountry) {
+            showSnackbar('请选择一个国家', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('launch-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> 启动中...';
+
+        try {
+            const result = await fetch(`${API}/api/launch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    target,
+                    country: selectedCountry,
+                    proxyHost, proxyPort, proxyUser, proxyPass
+                })
+            }).then(r => r.json());
+
+            if (result.error) {
+                showSnackbar(`启动失败: ${result.error}`, 'error');
+            } else {
+                showSnackbar(`${FLAGS[selectedCountry] || ''} 应用已启动 (PID: ${result.pid})`, 'success');
+                refreshInstances();
+            }
+        } catch (e) {
+            showSnackbar('启动失败: 网络错误', 'error');
+        }
+
+        btn.disabled = false;
+        btn.innerHTML = '▶ 启动应用';
+    }
+
+    async function detectAndLaunch() {
+        await detectIP();
+        if (selectedCountry && document.getElementById('target-path').value.trim()) {
+            await launchApp();
+        }
+    }
+
+    // ---- Instances ----
+    async function refreshInstances() {
+        try {
+            const instances = await fetch(`${API}/api/instances`).then(r => r.json());
+            renderInstances(instances);
+        } catch {}
+    }
+
+    function renderInstances(instances) {
+        const el = document.getElementById('instance-list');
+
+        if (!instances || instances.length === 0) {
+            el.innerHTML = `
+                <div class="empty-state">
+                    <div class="icon">🛡️</div>
+                    <div>暂无运行中的实例</div>
+                    <div style="margin-top: 4px; font-size: 12px;">配置并启动一个应用开始使用</div>
+                </div>`;
+            return;
+        }
+
+        el.innerHTML = instances.map(inst => {
+            const statusClass = inst.status.includes('running') ? 'running' :
+                                inst.status.includes('error') ? 'error' : 'stopped';
+            const targetName = inst.target.split(/[/\\]/).pop();
+            const time = new Date(inst.startTime).toLocaleTimeString();
+            
+            let proxyDisplay = inst.proxy === 'none' ? '直连' : inst.proxy;
+            if (proxyDisplay.length > 25) proxyDisplay = proxyDisplay.substring(0, 22) + '...';
+            
+            const btnHtml = statusClass === 'stopped' 
+                ? `<button class="btn btn-primary btn-sm" onclick="relaunchInstance('${inst.id}')" style="margin-right: 4px;">启动</button>
+                   <button class="btn btn-secondary btn-sm" onclick="deleteInstance('${inst.id}')">删除</button>`
+                : `<button class="btn btn-danger btn-sm" onclick="killInstance('${inst.id}')">停止</button>`;
+
+            return `
+                <div class="instance-item">
+                    <div class="inst-status ${statusClass}"></div>
+                    <div class="inst-info">
+                        <div class="inst-target">${targetName}</div>
+                        <div class="inst-meta">PID: ${inst.pid} · 启动于 ${time} · ${inst.status}</div>
+                    </div>
+                    <span class="inst-country">${FLAGS[inst.country] || ''}</span>
+                    <span class="inst-proxy" title="${inst.proxy}">${proxyDisplay}</span>
+                    ${btnHtml}
+                </div>`;
+        }).join('');
+    }
+
+    async function killInstance(id) {
+        await fetch(`${API}/api/kill/${id}`, { method: 'DELETE' });
+        showSnackbar('发送停止信号', 'success');
+        refreshInstances();
+    }
+
+    async function deleteInstance(id) {
+        if (!confirm('确定要删除此实例吗？（关联的配置文件将被彻底清除）')) return;
+        try {
+            await fetch(`${API}/api/instances/delete/${id}`, { method: 'DELETE' });
+            refreshInstances();
+        } catch {
+            showSnackbar('删除失败: 网络错误', 'error');
+        }
+    }
+
+    async function relaunchInstance(id) {
+        showSnackbar('正在重新启动实例...', 'success');
+        try {
+            const res = await fetch(`${API}/api/instances/relaunch/${id}`, { method: 'POST' });
+            const result = await res.json();
+            if (result.error) {
+                showSnackbar(`启动失败: ${result.error}`, 'error');
+            } else {
+                refreshInstances();
+            }
+        } catch {
+            showSnackbar('启动失败: 网络错误', 'error');
+        }
+    }
+
+    // ---- Browse (prompt fallback) ----
+    function browseTarget() {
+        const current = document.getElementById('target-path').value;
+        const result = prompt('输入目标应用程序路径:', current || 'C:\\');
+        if (result) document.getElementById('target-path').value = result;
+    }
+
+    // ---- Snackbar ----
+    function showSnackbar(msg, type = '') {
+        const el = document.getElementById('snackbar');
+        el.textContent = msg;
+        el.className = `snackbar show ${type}`;
+        setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    // ---- Start ----
+    init();
+</script>
+
+</body>
+</html>

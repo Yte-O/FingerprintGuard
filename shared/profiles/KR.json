@@ -1,0 +1,27 @@
+{
+  "country": "KR",
+  "country_name": "South Korea",
+  "timezone_iana": "Asia/Seoul",
+  "timezone_windows": "Korea Standard Time",
+  "utc_offset": 540,
+  "locale": "ko-KR",
+  "lcid": 1042,
+  "ui_language": 1042,
+  "languages": ["ko", "ko-KR", "en-US", "en"],
+  "fonts_common": [
+    "Malgun Gothic", "Batang", "Dotum", "Gulim",
+    "Gungsuh", "NanumGothic", "NanumMyeongjo",
+    "Noto Sans KR", "Noto Sans CJK KR"
+  ],
+  "resolution": { "w": 1920, "h": 1080 },
+  "dpi": 96,
+  "webgl": {
+    "vendor": "Google Inc. (NVIDIA)",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+  },
+  "canvas_seed": 556238104,
+  "platform": "Win32",
+  "hardwareConcurrency": 8,
+  "deviceMemory": 8,
+  "ua_hint": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+}

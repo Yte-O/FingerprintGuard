@@ -1,0 +1,26 @@
+{
+  "country": "RU",
+  "country_name": "Russia",
+  "timezone_iana": "Europe/Moscow",
+  "timezone_windows": "Russian Standard Time",
+  "utc_offset": 180,
+  "locale": "ru-RU",
+  "lcid": 1049,
+  "ui_language": 1049,
+  "languages": ["ru-RU", "ru", "en-US", "en"],
+  "fonts_common": [
+    "Arial", "Times New Roman", "Courier New",
+    "Segoe UI", "Calibri", "Consolas", "Tahoma"
+  ],
+  "resolution": { "w": 1920, "h": 1080 },
+  "dpi": 96,
+  "webgl": {
+    "vendor": "Google Inc. (NVIDIA)",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+  },
+  "canvas_seed": 492817360,
+  "platform": "Win32",
+  "hardwareConcurrency": 8,
+  "deviceMemory": 8,
+  "ua_hint": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+}

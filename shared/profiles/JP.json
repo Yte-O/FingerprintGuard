@@ -1,0 +1,27 @@
+{
+  "country": "JP",
+  "country_name": "Japan",
+  "timezone_iana": "Asia/Tokyo",
+  "timezone_windows": "Tokyo Standard Time",
+  "utc_offset": 540,
+  "locale": "ja-JP",
+  "lcid": 1041,
+  "ui_language": 1041,
+  "languages": ["ja", "ja-JP", "en-US", "en"],
+  "fonts_common": [
+    "MS Gothic", "MS PGothic", "MS Mincho", "MS PMincho",
+    "Meiryo", "Meiryo UI", "Yu Gothic", "Yu Gothic UI",
+    "Yu Mincho", "Noto Sans JP", "Noto Sans CJK JP"
+  ],
+  "resolution": { "w": 1920, "h": 1080 },
+  "dpi": 96,
+  "webgl": {
+    "vendor": "Google Inc. (NVIDIA)",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+  },
+  "canvas_seed": 981467231,
+  "platform": "Win32",
+  "hardwareConcurrency": 8,
+  "deviceMemory": 8,
+  "ua_hint": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+}

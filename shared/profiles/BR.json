@@ -1,0 +1,26 @@
+{
+  "country": "BR",
+  "country_name": "Brazil",
+  "timezone_iana": "America/Sao_Paulo",
+  "timezone_windows": "E. South America Standard Time",
+  "utc_offset": -180,
+  "locale": "pt-BR",
+  "lcid": 1046,
+  "ui_language": 1046,
+  "languages": ["pt-BR", "pt", "en-US", "en"],
+  "fonts_common": [
+    "Arial", "Verdana", "Times New Roman", "Courier New",
+    "Segoe UI", "Calibri", "Consolas"
+  ],
+  "resolution": { "w": 1920, "h": 1080 },
+  "dpi": 96,
+  "webgl": {
+    "vendor": "Google Inc. (NVIDIA)",
+    "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+  },
+  "canvas_seed": 735291048,
+  "platform": "Win32",
+  "hardwareConcurrency": 8,
+  "deviceMemory": 8,
+  "ua_hint": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+}
