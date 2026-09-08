@@ -227,19 +227,45 @@
 
     // ---- Font Fingerprint Override ----------------------------------------
     if (config.fonts_hidden && config.fonts_hidden.length > 0) {
-        // 1. Inject @font-face rules to redirect hidden fonts to Arial
-        // This handles DOM-based measurement (offsetWidth/offsetHeight) and most Canvas rendering
-        const style = document.createElement('style');
         let css = '';
         for (const font of config.fonts_hidden) {
-            css += `@font-face { font-family: "${font}"; src: local("Arial"); }\n`;
+            // Using a guaranteed non-existent local font causes the browser to fallback
+            // to the next font in the stack (e.g. monospace). This makes the measured
+            // width exactly equal to the fallback width, tricking the fingerprinter
+            // into believing the font is NOT installed.
+            css += `@font-face { font-family: "${font}"; src: local("FG_Fake_Font_12345"); }\n`;
         }
+
+        // 1. Synchronous injection via adoptedStyleSheets (covers inline scripts in <head>)
+        try {
+            const sheet = new CSSStyleSheet();
+            sheet.replaceSync(css);
+            document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+            
+            // Protect our stylesheet from being overwritten
+            const origAdopted = Object.getOwnPropertyDescriptor(Document.prototype, 'adoptedStyleSheets');
+            if (origAdopted) {
+                Object.defineProperty(Document.prototype, 'adoptedStyleSheets', {
+                    get: function() {
+                        const sheets = origAdopted.get.call(this);
+                        return sheets.filter(s => s !== sheet); // Hide our sheet
+                    },
+                    set: function(val) {
+                        if (Array.isArray(val) && !val.includes(sheet)) {
+                            val = [...val, sheet];
+                        }
+                        return origAdopted.set.call(this, val);
+                    }
+                });
+            }
+        } catch (e) {}
+
+        // 2. Fallback DOM injection (covers cases where adoptedStyleSheets fails or isn't supported)
+        const style = document.createElement('style');
         style.textContent = css;
 
-        // Insert as early as possible
         const insertStyle = () => {
             if (document.documentElement && !document.documentElement.contains(style)) {
-                // Prepend to head or documentElement so it applies globally
                 (document.head || document.documentElement).appendChild(style);
             }
         };
@@ -250,24 +276,7 @@
             }
         });
         observer.observe(document, { childList: true, subtree: true });
-        // In case documentElement already exists
         if (document.documentElement) insertStyle();
-
-        // 2. Intercept Canvas measureText / font setter as an extra layer
-        // Some fingerprinters might bypass CSS @font-face or use different font syntaxes
-        const origMeasureText = CanvasRenderingContext2D.prototype.measureText;
-        const fontRegex = new RegExp(config.fonts_hidden.join('|'), 'gi');
-        
-        // We override the font setter to replace hidden fonts with Arial
-        const origFontSetter = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font').set;
-        Object.defineProperty(CanvasRenderingContext2D.prototype, 'font', {
-            set: function(val) {
-                if (typeof val === 'string' && fontRegex.test(val)) {
-                    val = val.replace(fontRegex, 'Arial');
-                }
-                return origFontSetter.call(this, val);
-            }
-        });
     }
 
     // ---- Report success ---------------------------------------------------
