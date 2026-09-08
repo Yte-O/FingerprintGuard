@@ -233,38 +233,35 @@
         function sanitizeFontString(str) {
             if (typeof str !== 'string') return str;
             let sanitized = str.replace(fontRegex, '');
-            // Cleanup trailing/leading/multiple commas
-            sanitized = sanitized.replace(/^,|,$/g, '').replace(/,\s*,/g, ',').trim();
+            // Cleanup trailing/leading commas, and multiple commas
+            sanitized = sanitized.replace(/,\s*$/g, '').replace(/^\s*,/g, '').replace(/,\s*,/g, ',').trim();
+            // If the string lacks a font family (e.g. ends with a size metric or number), append a generic family
+            if (/(px|pt|em|rem|%|vw|vh|\d)$/i.test(sanitized)) {
+                sanitized += ' sans-serif';
+            }
             return sanitized || 'sans-serif';
         }
 
         const fontStore = new WeakMap();
 
-        // 1. Hook Canvas font setter
-        const CanvasCtx2D = CanvasRenderingContext2D.prototype;
-        const origCtxFont = Object.getOwnPropertyDescriptor(CanvasCtx2D, 'font');
-        Object.defineProperty(CanvasCtx2D, 'font', {
-            get: function() { 
-                return fontStore.get(this) || origCtxFont.get.call(this); 
-            },
-            set: function(val) {
-                fontStore.set(this, val);
-                return origCtxFont.set.call(this, sanitizeFontString(val));
+        function hookProperty(obj, prop, sanitizeFn) {
+            if (!obj) return;
+            const orig = Object.getOwnPropertyDescriptor(obj, prop);
+            if (orig) {
+                Object.defineProperty(obj, prop, {
+                    get: function() { return fontStore.get(this) || orig.get.call(this); },
+                    set: function(val) {
+                        fontStore.set(this, val);
+                        return orig.set.call(this, sanitizeFn(val));
+                    }
+                });
             }
-        });
+        }
 
+        // 1. Hook Canvas font setters
+        hookProperty(CanvasRenderingContext2D.prototype, 'font', sanitizeFontString);
         if (typeof OffscreenCanvasRenderingContext2D !== 'undefined') {
-            const OffscreenCtx2D = OffscreenCanvasRenderingContext2D.prototype;
-            const origOffCtxFont = Object.getOwnPropertyDescriptor(OffscreenCtx2D, 'font');
-            Object.defineProperty(OffscreenCtx2D, 'font', {
-                get: function() { 
-                    return fontStore.get(this) || origOffCtxFont.get.call(this); 
-                },
-                set: function(val) {
-                    fontStore.set(this, val);
-                    return origOffCtxFont.set.call(this, sanitizeFontString(val));
-                }
-            });
+            hookProperty(OffscreenCanvasRenderingContext2D.prototype, 'font', sanitizeFontString);
         }
 
         // 2. Hook document.fonts (FontFaceSet) API
@@ -284,37 +281,35 @@
         // 3. Hook DOM CSSStyleDeclaration
         const CSSDecl = CSSStyleDeclaration.prototype;
         
-        // Hook fontFamily property
-        const origFontFamily = Object.getOwnPropertyDescriptor(CSSDecl, 'fontFamily');
-        if (origFontFamily) {
-            Object.defineProperty(CSSDecl, 'fontFamily', {
-                get: function() { 
-                    return fontStore.get(this) || origFontFamily.get.call(this); 
-                },
-                set: function(val) {
-                    fontStore.set(this, val);
-                    return origFontFamily.set.call(this, sanitizeFontString(val));
-                }
-            });
-        }
+        hookProperty(CSSDecl, 'fontFamily', sanitizeFontString);
+        hookProperty(CSSDecl, 'cssText', sanitizeFontString);
 
-        // Hook setProperty
         const origSetProperty = CSSDecl.setProperty;
         CSSDecl.setProperty = function(prop, val, priority) {
             if (prop === 'font-family' || prop === 'font') {
-                fontStore.set(this, val); // save original for potential getter, though getPropertyValue handles it
+                fontStore.set(this, val);
                 val = sanitizeFontString(val);
             }
             return origSetProperty.call(this, prop, val, priority);
         };
 
-        // Hook getPropertyValue to return the fake untampered string
         const origGetPropertyValue = CSSDecl.getPropertyValue;
         CSSDecl.getPropertyValue = function(prop) {
             if ((prop === 'font-family' || prop === 'font') && fontStore.has(this)) {
                 return fontStore.get(this);
             }
             return origGetPropertyValue.call(this, prop);
+        };
+
+        // 4. Hook setAttribute to catch inline styles like span.setAttribute('style', 'font-family: ...')
+        const origSetAttribute = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function(name, value) {
+            if (name.toLowerCase() === 'style' && typeof value === 'string') {
+                if (fontRegex.test(value)) {
+                    value = sanitizeFontString(value);
+                }
+            }
+            return origSetAttribute.call(this, name, value);
         };
     }
 

@@ -125,8 +125,15 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
             });
             const localPort = await getFreePort();
             try {
+                let scheme = 'socks5://';
+                let cleanHost = proxyHost;
+                if (proxyHost.includes('://')) {
+                    const parts = proxyHost.split('://');
+                    scheme = parts[0] + '://';
+                    cleanHost = parts[1];
+                }
                 localProxyServer = httpToSocks.createServer({
-                    proxy: `socks5://${proxyUser}:${proxyPass}@${proxyHost}:${proxyPort}`
+                    socks: `${cleanHost}:${proxyPort}:${proxyUser}:${proxyPass}`
                 });
                 localProxyServer.listen(localPort, '127.0.0.1');
                 finalProxyStr = `http://127.0.0.1:${localPort}`;
@@ -134,7 +141,13 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
                 return { error: `无法启动本地代理中转: ${e.message}` };
             }
         } else {
-            finalProxyStr = `socks5://${proxyHost}:${proxyPort}`;
+            // Do not force socks5:// so HTTP proxies (like Clash 7890) work out of the box.
+            // If the user wants SOCKS5, they can include socks5:// in the host field.
+            let host = proxyHost;
+            if (!host.includes('://')) {
+                // If it's just an IP, we leave it as is; Chrome defaults to HTTP proxy
+            }
+            finalProxyStr = `${host}:${proxyPort}`;
         }
     }
 

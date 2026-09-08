@@ -568,7 +568,7 @@
         <div class="form-group">
             <label class="form-label">SOCKS5 / HTTP 代理 (可选)</label>
             <div class="form-row" style="margin-bottom: 8px;">
-                <input type="text" class="form-input" id="proxy-host" placeholder="Host (e.g. 127.0.0.1)" style="flex: 2;">
+                <input type="text" class="form-input" id="proxy-host" placeholder="Host (e.g. 127.0.0.1 或 socks5://)" style="flex: 2;">
                 <input type="text" class="form-input" id="proxy-port" placeholder="Port" style="flex: 1;">
             </div>
             <div class="form-row">
@@ -664,6 +664,14 @@
         }
 
         // Load saved config
+        loadConfig();
+
+        // Load instances
+        refreshInstances();
+        setInterval(refreshInstances, 2000);
+    }
+
+    async function loadConfig() {
         try {
             const cfg = await fetch(`${API}/api/config`).then(r => r.json());
             if (cfg.lastTarget) document.getElementById('target-path').value = cfg.lastTarget;
@@ -673,7 +681,6 @@
             if (cfg.lastProxyPass) document.getElementById('proxy-pass').value = cfg.lastProxyPass;
             if (cfg.lastCountry) selectCountry(cfg.lastCountry);
         } catch {}
-
         // Load instances
         refreshInstances();
         setInterval(refreshInstances, 2000);
