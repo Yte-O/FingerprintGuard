@@ -227,56 +227,95 @@
 
     // ---- Font Fingerprint Override ----------------------------------------
     if (config.fonts_hidden && config.fonts_hidden.length > 0) {
-        let css = '';
-        for (const font of config.fonts_hidden) {
-            // Using a guaranteed non-existent local font causes the browser to fallback
-            // to the next font in the stack (e.g. monospace). This makes the measured
-            // width exactly equal to the fallback width, tricking the fingerprinter
-            // into believing the font is NOT installed.
-            css += `@font-face { font-family: "${font}"; src: local("FG_Fake_Font_12345"); }\n`;
+        // Build regex to match hidden fonts (e.g., "Microsoft YaHei", SimSun)
+        const fontRegex = new RegExp(`['"]?(${config.fonts_hidden.join('|')})['"]?\\s*,?`, 'gi');
+        
+        function sanitizeFontString(str) {
+            if (typeof str !== 'string') return str;
+            let sanitized = str.replace(fontRegex, '');
+            // Cleanup trailing/leading/multiple commas
+            sanitized = sanitized.replace(/^,|,$/g, '').replace(/,\s*,/g, ',').trim();
+            return sanitized || 'sans-serif';
         }
 
-        // 1. Synchronous injection via adoptedStyleSheets (covers inline scripts in <head>)
-        try {
-            const sheet = new CSSStyleSheet();
-            sheet.replaceSync(css);
-            document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-            
-            // Protect our stylesheet from being overwritten
-            const origAdopted = Object.getOwnPropertyDescriptor(Document.prototype, 'adoptedStyleSheets');
-            if (origAdopted) {
-                Object.defineProperty(Document.prototype, 'adoptedStyleSheets', {
-                    get: function() {
-                        const sheets = origAdopted.get.call(this);
-                        return sheets.filter(s => s !== sheet); // Hide our sheet
-                    },
-                    set: function(val) {
-                        if (Array.isArray(val) && !val.includes(sheet)) {
-                            val = [...val, sheet];
-                        }
-                        return origAdopted.set.call(this, val);
-                    }
-                });
-            }
-        } catch (e) {}
+        const fontStore = new WeakMap();
 
-        // 2. Fallback DOM injection (covers cases where adoptedStyleSheets fails or isn't supported)
-        const style = document.createElement('style');
-        style.textContent = css;
-
-        const insertStyle = () => {
-            if (document.documentElement && !document.documentElement.contains(style)) {
-                (document.head || document.documentElement).appendChild(style);
-            }
-        };
-        const observer = new MutationObserver((mutations, obs) => {
-            if (document.documentElement) {
-                insertStyle();
-                obs.disconnect();
+        // 1. Hook Canvas font setter
+        const CanvasCtx2D = CanvasRenderingContext2D.prototype;
+        const origCtxFont = Object.getOwnPropertyDescriptor(CanvasCtx2D, 'font');
+        Object.defineProperty(CanvasCtx2D, 'font', {
+            get: function() { 
+                return fontStore.get(this) || origCtxFont.get.call(this); 
+            },
+            set: function(val) {
+                fontStore.set(this, val);
+                return origCtxFont.set.call(this, sanitizeFontString(val));
             }
         });
-        observer.observe(document, { childList: true, subtree: true });
-        if (document.documentElement) insertStyle();
+
+        if (typeof OffscreenCanvasRenderingContext2D !== 'undefined') {
+            const OffscreenCtx2D = OffscreenCanvasRenderingContext2D.prototype;
+            const origOffCtxFont = Object.getOwnPropertyDescriptor(OffscreenCtx2D, 'font');
+            Object.defineProperty(OffscreenCtx2D, 'font', {
+                get: function() { 
+                    return fontStore.get(this) || origOffCtxFont.get.call(this); 
+                },
+                set: function(val) {
+                    fontStore.set(this, val);
+                    return origOffCtxFont.set.call(this, sanitizeFontString(val));
+                }
+            });
+        }
+
+        // 2. Hook document.fonts (FontFaceSet) API
+        if (document.fonts) {
+            const origCheck = document.fonts.check;
+            document.fonts.check = function(font, text) {
+                if (fontRegex.test(font)) return false; // Deny existence
+                return origCheck.call(this, font, text);
+            };
+            const origLoad = document.fonts.load;
+            document.fonts.load = function(font, text) {
+                if (fontRegex.test(font)) return Promise.resolve([]); // Return empty
+                return origLoad.call(this, font, text);
+            };
+        }
+
+        // 3. Hook DOM CSSStyleDeclaration
+        const CSSDecl = CSSStyleDeclaration.prototype;
+        
+        // Hook fontFamily property
+        const origFontFamily = Object.getOwnPropertyDescriptor(CSSDecl, 'fontFamily');
+        if (origFontFamily) {
+            Object.defineProperty(CSSDecl, 'fontFamily', {
+                get: function() { 
+                    return fontStore.get(this) || origFontFamily.get.call(this); 
+                },
+                set: function(val) {
+                    fontStore.set(this, val);
+                    return origFontFamily.set.call(this, sanitizeFontString(val));
+                }
+            });
+        }
+
+        // Hook setProperty
+        const origSetProperty = CSSDecl.setProperty;
+        CSSDecl.setProperty = function(prop, val, priority) {
+            if (prop === 'font-family' || prop === 'font') {
+                fontStore.set(this, val); // save original for potential getter, though getPropertyValue handles it
+                val = sanitizeFontString(val);
+            }
+            return origSetProperty.call(this, prop, val, priority);
+        };
+
+        // Hook getPropertyValue to return the fake untampered string
+        const origGetPropertyValue = CSSDecl.getPropertyValue;
+        CSSDecl.getPropertyValue = function(prop) {
+            if ((prop === 'font-family' || prop === 'font') && fontStore.has(this)) {
+                return fontStore.get(this);
+            }
+            return origGetPropertyValue.call(this, prop);
+        };
     }
 
     // ---- Report success ---------------------------------------------------
