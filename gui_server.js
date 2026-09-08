@@ -204,6 +204,10 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
                 electronArgs.push(`--user-data-dir=${chromeProfileDir}`);
                 electronArgs.push('--no-first-run');
                 electronArgs.push('--no-default-browser-check');
+                if (profile.locale) electronArgs.push(`--lang=${profile.locale}`);
+                if (profile.languages && profile.languages.length) {
+                    electronArgs.push(`--accept-lang=${profile.languages.join(',')}`);
+                }
             }
             if (finalProxyStr) electronArgs.push(`--proxy-server=${finalProxyStr}`);
 
@@ -250,8 +254,13 @@ async function tryCDPInject(instanceId, port, profile) {
             hardwareConcurrency: profile.hardwareConcurrency || 8,
             deviceMemory: profile.deviceMemory || 8,
             webgl: profile.webgl,
-            canvas_seed: profile.canvas_seed || 0,
-            resolution: profile.resolution
+            canvas_seed: profile.canvas_seed || Math.floor(Math.random() * 1000000), // Fallback if missing
+            resolution: profile.resolution,
+            ua_hint: profile.ua_hint,
+            fonts_hidden: (profile.country === 'CN' || profile.country === 'TW') ? [] : [
+                "Microsoft YaHei", "Microsoft YaHei UI", "SimSun", "NSimSun",
+                "PingFang SC", "SimHei", "STHeiti", "STKaiti", "Microsoft JhengHei"
+            ]
         };
         const script = overrideJs.replace('__FG_CONFIG__', JSON.stringify(jsConfig));
 
@@ -294,8 +303,8 @@ function setupBrowserCDP(browserWsUrl, script, jsConfig, inst) {
                     sendCmd('Emulation.setTimezoneOverride', { timezoneId: jsConfig.timezone_iana }, sessionId);
                     sendCmd('Emulation.setLocaleOverride', { locale: jsConfig.locale }, sessionId);
                     sendCmd('Emulation.setUserAgentOverride', { 
-                        userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`,
-                        acceptLanguage: jsConfig.languages
+                        userAgent: jsConfig.ua_hint || `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36`,
+                        acceptLanguage: (jsConfig.languages || []).join(',')
                     }, sessionId);
                     // Inject JS overrides
                     sendCmd('Page.addScriptToEvaluateOnNewDocument', { source: script }, sessionId);

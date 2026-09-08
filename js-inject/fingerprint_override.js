@@ -89,17 +89,10 @@
     if (config.webgl) {
         const getParameterOrig = WebGLRenderingContext.prototype.getParameter;
         WebGLRenderingContext.prototype.getParameter = function(param) {
-            // UNMASKED_VENDOR_WEBGL = 0x9245
-            // UNMASKED_RENDERER_WEBGL = 0x9246
-            const ext = this.getExtension('WEBGL_debug_renderer_info');
-            if (ext) {
-                if (param === ext.UNMASKED_VENDOR_WEBGL) {
-                    return config.webgl.vendor;
-                }
-                if (param === ext.UNMASKED_RENDERER_WEBGL) {
-                    return config.webgl.renderer;
-                }
-            }
+            // UNMASKED_VENDOR_WEBGL = 37445 (0x9245)
+            // UNMASKED_RENDERER_WEBGL = 37446 (0x9246)
+            if (param === 37445) return config.webgl.vendor;
+            if (param === 37446) return config.webgl.renderer;
             return getParameterOrig.call(this, param);
         };
 
@@ -107,15 +100,8 @@
         if (typeof WebGL2RenderingContext !== 'undefined') {
             const getParameter2Orig = WebGL2RenderingContext.prototype.getParameter;
             WebGL2RenderingContext.prototype.getParameter = function(param) {
-                const ext = this.getExtension('WEBGL_debug_renderer_info');
-                if (ext) {
-                    if (param === ext.UNMASKED_VENDOR_WEBGL) {
-                        return config.webgl.vendor;
-                    }
-                    if (param === ext.UNMASKED_RENDERER_WEBGL) {
-                        return config.webgl.renderer;
-                    }
-                }
+                if (param === 37445) return config.webgl.vendor;
+                if (param === 37446) return config.webgl.renderer;
                 return getParameter2Orig.call(this, param);
             };
         }
@@ -185,7 +171,23 @@
                     }
                 }
             } catch (e) {}
-            return origToBlob.call(this, callback, ...args);
+        };
+
+        // Hook getImageData to add noise directly when scripts read pixels
+        const origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+        CanvasRenderingContext2D.prototype.getImageData = function(...args) {
+            const imageData = origGetImageData.apply(this, args);
+            try {
+                const data = imageData.data;
+                const numPixels = Math.min(10, Math.floor(data.length / 4));
+                for (let i = 0; i < numPixels; i++) {
+                    const idx = Math.floor(seededRandom() * (data.length / 4)) * 4;
+                    const channel = Math.floor(seededRandom() * 3);
+                    const delta = seededRandom() > 0.5 ? 1 : -1;
+                    data[idx + channel] = Math.max(0, Math.min(255, data[idx + channel] + delta));
+                }
+            } catch (e) {}
+            return imageData;
         };
     }
 
@@ -223,6 +225,51 @@
         } catch (e) {}
     }
 
+    // ---- Font Fingerprint Override ----------------------------------------
+    if (config.fonts_hidden && config.fonts_hidden.length > 0) {
+        // 1. Inject @font-face rules to redirect hidden fonts to Arial
+        // This handles DOM-based measurement (offsetWidth/offsetHeight) and most Canvas rendering
+        const style = document.createElement('style');
+        let css = '';
+        for (const font of config.fonts_hidden) {
+            css += `@font-face { font-family: "${font}"; src: local("Arial"); }\n`;
+        }
+        style.textContent = css;
+
+        // Insert as early as possible
+        const insertStyle = () => {
+            if (document.documentElement && !document.documentElement.contains(style)) {
+                // Prepend to head or documentElement so it applies globally
+                (document.head || document.documentElement).appendChild(style);
+            }
+        };
+        const observer = new MutationObserver((mutations, obs) => {
+            if (document.documentElement) {
+                insertStyle();
+                obs.disconnect();
+            }
+        });
+        observer.observe(document, { childList: true, subtree: true });
+        // In case documentElement already exists
+        if (document.documentElement) insertStyle();
+
+        // 2. Intercept Canvas measureText / font setter as an extra layer
+        // Some fingerprinters might bypass CSS @font-face or use different font syntaxes
+        const origMeasureText = CanvasRenderingContext2D.prototype.measureText;
+        const fontRegex = new RegExp(config.fonts_hidden.join('|'), 'gi');
+        
+        // We override the font setter to replace hidden fonts with Arial
+        const origFontSetter = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font').set;
+        Object.defineProperty(CanvasRenderingContext2D.prototype, 'font', {
+            set: function(val) {
+                if (typeof val === 'string' && fontRegex.test(val)) {
+                    val = val.replace(fontRegex, 'Arial');
+                }
+                return origFontSetter.call(this, val);
+            }
+        });
+    }
+
     // ---- Report success ---------------------------------------------------
     console.log('[FingerprintGuard] JS overrides active:', {
         timezone: config.timezone_iana,
@@ -230,7 +277,8 @@
         languages: config.languages,
         resolution: config.resolution,
         webgl: config.webgl ? 'spoofed' : 'native',
-        canvas: config.canvas_seed ? 'noise-injected' : 'native'
+        canvas: config.canvas_seed ? 'noise-injected' : 'native',
+        hidden_fonts: config.fonts_hidden
     });
 
 })(__FG_CONFIG__);
