@@ -41,23 +41,42 @@ function getProcessName(target) {
 }
 
 // Resolve the AppUserModelId from a WindowsApps path.
-// Path format: ...\WindowsApps\<PackageName>_<Version>_<Arch>__<PublisherId>\...
-// We need: <PackageName>_<PublisherId>!<AppId>
-// AppId is typically the same as the package base name.
+// Accurately reads the AppxManifest.xml from the package directory,
+// extracting <Identity Name="..."> and <Application Id="...">
 function resolveAppModelId(target) {
+    let dir = path.dirname(target);
+    while (dir && dir !== path.dirname(dir)) {
+        const manifest = path.join(dir, 'AppxManifest.xml');
+        if (fs.existsSync(manifest)) {
+            try {
+                const xml = fs.readFileSync(manifest, 'utf8');
+                const pkgFolder = path.basename(dir);
+                const pubId = (pkgFolder.split('__')[1] || '').split('\\')[0].split('/')[0];
+                const idMatch = xml.match(/<Identity[^>]+Name="([^"]+)"/i);
+                const appMatch = xml.match(/<Application[^>]+Id="([^"]+)"/i);
+                if (idMatch && appMatch && pubId) {
+                    return `${idMatch[1]}_${pubId}!${appMatch[1]}`;
+                }
+            } catch (e) {
+                console.error('[UWP] Error reading AppxManifest.xml:', e.message);
+            }
+        }
+        dir = path.dirname(dir);
+    }
+
+    // Fallback heuristic if AppxManifest.xml is not readable
     const lower = target.toLowerCase();
     const idx = lower.indexOf('\\windowsapps\\');
-    if (idx < 0) return null;
-    const afterWA = target.substring(idx + '\\windowsapps\\'.length);
-    const folderName = afterWA.split('\\')[0]; // e.g. Claude_1.49585.0.0_x64__pzs8sxrjxfjjc
-    const parts = folderName.split('_');
-    if (parts.length < 4) return null;
-    const packageName = parts[0]; // e.g. Claude or OpenAI.Codex
-    const publisherId = parts[parts.length - 1]; // e.g. pzs8sxrjxfjjc
-    const familyName = `${packageName}_${publisherId}`;
-    // AppId: Try to match the package name's last segment (after dots)
-    const appIdGuess = packageName.includes('.') ? packageName.split('.').pop() : packageName;
-    return `${familyName}!${appIdGuess}`;
+    if (idx >= 0) {
+        const afterWA = target.substring(idx + '\\windowsapps\\'.length);
+        const folderName = afterWA.split('\\')[0];
+        const pubId = (folderName.split('__')[1] || '').split('\\')[0];
+        const pkgName = folderName.split('_')[0];
+        if (pubId && pkgName) {
+            return `${pkgName}_${pubId}!App`;
+        }
+    }
+    return null;
 }
 
 // Poll for a process by name, returns PID or 0 after timeout
@@ -293,8 +312,11 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
                 // Step 1: Launch via shell:AppsFolder (the only way UWP apps accept activation)
                 if (appModelId) {
                     console.log(`[UWP] Launching via shell:AppsFolder\\${appModelId}`);
-                    const { execSync } = require('child_process');
-                    execSync(`explorer.exe "shell:AppsFolder\\${appModelId}"`, { timeout: 10000 });
+                    // Launch via PowerShell Start-Process so explorer.exe exit code never throws or blocks
+                    spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process 'shell:AppsFolder\\${appModelId}'`], {
+                        stdio: 'ignore',
+                        detached: true
+                    }).unref();
                 } else {
                     // Fallback: try direct launch without DLL injection first
                     console.log(`[UWP] No AppModelId resolved, trying direct launch...`);
