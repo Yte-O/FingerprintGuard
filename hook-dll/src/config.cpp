@@ -165,6 +165,9 @@ bool LoadProfileFromFile(const std::wstring& path, FingerprintProfile& p) {
     // UA
     p.ua_hint = JsonStr(json, "ua_hint");
 
+    // Proxy
+    p.proxy_server = JsonStr(json, "proxyServer");
+
     return true;
 }
 

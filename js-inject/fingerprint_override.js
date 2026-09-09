@@ -225,91 +225,315 @@
         } catch (e) {}
     }
 
-    // ---- Font Fingerprint Override ----------------------------------------
+    // ---- Font Fingerprint Override v2 --------------------------------------
+    // Strategy: Intercept font-family assignment at BOTH the Canvas API and
+    // DOM/CSS levels. Hidden (e.g. Chinese) font names are stripped BEFORE they
+    // reach the browser's layout/render engine.  Width-comparison detection then
+    // sees identical metrics for hidden fonts vs their fallbacks → concludes
+    // font is NOT installed.
+    //
+    // v1 bugs fixed:
+    //   • RegExp with 'g' flag caused test() to alternate true/false (lastIndex)
+    //   • document.fonts.check hooked on instance instead of prototype
+    //   • CSSStyleDeclaration hooks shared a single WeakMap causing collisions
+    //   • cssText hook ran the same sanitizer meant for font-family strings
+
     if (config.fonts_hidden && config.fonts_hidden.length > 0) {
-        // Build regex to match hidden fonts (e.g., "Microsoft YaHei", SimSun)
-        const fontRegex = new RegExp(`['"]?(${config.fonts_hidden.join('|')})['"]?\\s*,?`, 'gi');
-        
-        function sanitizeFontString(str) {
-            if (typeof str !== 'string') return str;
-            let sanitized = str.replace(fontRegex, '');
-            // Cleanup trailing/leading commas, and multiple commas
-            sanitized = sanitized.replace(/,\s*$/g, '').replace(/^\s*,/g, '').replace(/,\s*,/g, ',').trim();
-            // If the string lacks a font family (e.g. ends with a size metric or number), append a generic family
-            if (/(px|pt|em|rem|%|vw|vh|\d)$/i.test(sanitized)) {
-                sanitized += ' sans-serif';
-            }
-            return sanitized || 'sans-serif';
+        const HIDDEN = new Set(config.fonts_hidden.map(f => f.toLowerCase().trim()));
+
+        // ---- Helpers (no global-flag regex, no state) ----
+        function isHidden(name) {
+            return HIDDEN.has(name.replace(/['"]/g, '').trim().toLowerCase());
         }
 
-        const fontStore = new WeakMap();
+        function containsHidden(str) {
+            if (!str || typeof str !== 'string') return false;
+            return str.split(',').some(f => isHidden(f));
+        }
 
-        function hookProperty(obj, prop, sanitizeFn) {
-            if (!obj) return;
-            const orig = Object.getOwnPropertyDescriptor(obj, prop);
-            if (orig) {
-                Object.defineProperty(obj, prop, {
-                    get: function() { return fontStore.get(this) || orig.get.call(this); },
-                    set: function(val) {
-                        fontStore.set(this, val);
-                        return orig.set.call(this, sanitizeFn(val));
-                    }
+        // Strip hidden fonts from a bare font-family list: "'YaHei', Arial, mono"
+        function stripFamilies(familyStr) {
+            const clean = familyStr.split(',')
+                .filter(f => !isHidden(f))
+                .map(f => f.trim())
+                .filter(Boolean);
+            return clean.length ? clean.join(', ') : 'sans-serif';
+        }
+
+        // Strip hidden fonts from a Canvas/CSS font shorthand:
+        //   "[style] [variant] [weight] size[/lh] family1, family2"
+        function stripCanvasFont(fontStr) {
+            if (!fontStr || typeof fontStr !== 'string') return fontStr;
+            var m = fontStr.match(
+                /^((?:(?:italic|oblique|normal|small-caps|bold|bolder|lighter|\d{1,4})\s+)*(?:\d+(?:\.\d+)?(?:px|pt|em|rem|%|ex|ch|vw|vh|vmin|vmax)(?:\s*\/\s*\S+)?))\s+(.+)$/i
+            );
+            if (!m) return stripFamilies(fontStr);   // no size prefix → just families
+            return m[1] + ' ' + stripFamilies(m[2]);
+        }
+
+        // Strip hidden fonts from arbitrary CSS text containing font-family decls
+        function stripFromCSS(css) {
+            if (!css || typeof css !== 'string') return css;
+            return css.replace(/font-family\s*:\s*([^;!}]+)/gi, function(_, fams) {
+                return 'font-family: ' + stripFamilies(fams);
+            });
+        }
+
+        // ================================================================
+        // 1. Canvas ctx.font — strip hidden fonts before rendering/measuring
+        // ================================================================
+        var _ctxFontDesc = Object.getOwnPropertyDescriptor(
+            CanvasRenderingContext2D.prototype, 'font'
+        );
+        if (_ctxFontDesc && _ctxFontDesc.set) {
+            var _fGet = _ctxFontDesc.get, _fSet = _ctxFontDesc.set;
+            var _fMap = new WeakMap();
+            Object.defineProperty(CanvasRenderingContext2D.prototype, 'font', {
+                get: function() {
+                    return _fMap.has(this) ? _fMap.get(this) : _fGet.call(this);
+                },
+                set: function(v) {
+                    _fMap.set(this, v);          // store original for getter
+                    _fSet.call(this, stripCanvasFont(v));  // set clean version
+                },
+                configurable: true,
+                enumerable: true
+            });
+        }
+
+        // OffscreenCanvas (Web Workers)
+        if (typeof OffscreenCanvasRenderingContext2D !== 'undefined') {
+            var _oDesc = Object.getOwnPropertyDescriptor(
+                OffscreenCanvasRenderingContext2D.prototype, 'font'
+            );
+            if (_oDesc && _oDesc.set) {
+                var _oGet = _oDesc.get, _oSet = _oDesc.set;
+                var _oMap = new WeakMap();
+                Object.defineProperty(OffscreenCanvasRenderingContext2D.prototype, 'font', {
+                    get: function() { return _oMap.has(this) ? _oMap.get(this) : _oGet.call(this); },
+                    set: function(v) { _oMap.set(this, v); _oSet.call(this, stripCanvasFont(v)); },
+                    configurable: true, enumerable: true
                 });
             }
         }
 
-        // 1. Hook Canvas font setters
-        hookProperty(CanvasRenderingContext2D.prototype, 'font', sanitizeFontString);
-        if (typeof OffscreenCanvasRenderingContext2D !== 'undefined') {
-            hookProperty(OffscreenCanvasRenderingContext2D.prototype, 'font', sanitizeFontString);
+        // ================================================================
+        // 2. document.fonts (FontFaceSet) — deny existence of hidden fonts
+        //    Hook on PROTOTYPE so it applies to all documents incl. iframes
+        // ================================================================
+        try {
+            var _origCheck = FontFaceSet.prototype.check;
+            FontFaceSet.prototype.check = function(font, text) {
+                if (typeof font === 'string' && containsHidden(font)) return false;
+                return _origCheck.call(this, font, text);
+            };
+            var _origLoad = FontFaceSet.prototype.load;
+            FontFaceSet.prototype.load = function(font, text) {
+                if (typeof font === 'string' && containsHidden(font)) return Promise.resolve([]);
+                return _origLoad.call(this, font, text);
+            };
+        } catch (_e) {}
+
+        // ================================================================
+        // 3. CSSStyleDeclaration — strip hidden fonts from DOM styles so
+        //    offsetWidth / getBoundingClientRect return fallback metrics
+        // ================================================================
+        var _cssMap = new WeakMap();  // stores original fontFamily per style obj
+
+        // 3a. fontFamily property
+        var _ffDesc = Object.getOwnPropertyDescriptor(CSSStyleDeclaration.prototype, 'fontFamily');
+        if (_ffDesc && _ffDesc.set) {
+            Object.defineProperty(CSSStyleDeclaration.prototype, 'fontFamily', {
+                get: function() {
+                    return _cssMap.has(this) ? _cssMap.get(this) : _ffDesc.get.call(this);
+                },
+                set: function(v) {
+                    _cssMap.set(this, v);                   // original for getter
+                    _ffDesc.set.call(this, stripFamilies(v)); // clean for rendering
+                },
+                configurable: true, enumerable: true
+            });
         }
 
-        // 2. Hook document.fonts (FontFaceSet) API
-        if (document.fonts) {
-            const origCheck = document.fonts.check;
-            document.fonts.check = function(font, text) {
-                if (fontRegex.test(font)) return false; // Deny existence
-                return origCheck.call(this, font, text);
-            };
-            const origLoad = document.fonts.load;
-            document.fonts.load = function(font, text) {
-                if (fontRegex.test(font)) return Promise.resolve([]); // Return empty
-                return origLoad.call(this, font, text);
-            };
+        // 3b. font shorthand property (separate WeakMap to avoid collision)
+        var _fShDesc = Object.getOwnPropertyDescriptor(CSSStyleDeclaration.prototype, 'font');
+        if (_fShDesc && _fShDesc.set) {
+            var _fShMap = new WeakMap();
+            Object.defineProperty(CSSStyleDeclaration.prototype, 'font', {
+                get: function() {
+                    return _fShMap.has(this) ? _fShMap.get(this) : _fShDesc.get.call(this);
+                },
+                set: function(v) {
+                    _fShMap.set(this, v);
+                    _fShDesc.set.call(this, stripCanvasFont(v));
+                },
+                configurable: true, enumerable: true
+            });
         }
 
-        // 3. Hook DOM CSSStyleDeclaration
-        const CSSDecl = CSSStyleDeclaration.prototype;
-        
-        hookProperty(CSSDecl, 'fontFamily', sanitizeFontString);
-        hookProperty(CSSDecl, 'cssText', sanitizeFontString);
-
-        const origSetProperty = CSSDecl.setProperty;
-        CSSDecl.setProperty = function(prop, val, priority) {
-            if (prop === 'font-family' || prop === 'font') {
-                fontStore.set(this, val);
-                val = sanitizeFontString(val);
-            }
-            return origSetProperty.call(this, prop, val, priority);
-        };
-
-        const origGetPropertyValue = CSSDecl.getPropertyValue;
-        CSSDecl.getPropertyValue = function(prop) {
-            if ((prop === 'font-family' || prop === 'font') && fontStore.has(this)) {
-                return fontStore.get(this);
-            }
-            return origGetPropertyValue.call(this, prop);
-        };
-
-        // 4. Hook setAttribute to catch inline styles like span.setAttribute('style', 'font-family: ...')
-        const origSetAttribute = Element.prototype.setAttribute;
-        Element.prototype.setAttribute = function(name, value) {
-            if (name.toLowerCase() === 'style' && typeof value === 'string') {
-                if (fontRegex.test(value)) {
-                    value = sanitizeFontString(value);
+        // 3c. setProperty / getPropertyValue
+        var _origSP = CSSStyleDeclaration.prototype.setProperty;
+        CSSStyleDeclaration.prototype.setProperty = function(prop, val, pri) {
+            if (typeof val === 'string') {
+                if (prop === 'font-family') {
+                    _cssMap.set(this, val);
+                    val = stripFamilies(val);
+                } else if (prop === 'font') {
+                    val = stripCanvasFont(val);
                 }
             }
-            return origSetAttribute.call(this, name, value);
+            return _origSP.call(this, prop, val, pri);
+        };
+
+        var _origGPV = CSSStyleDeclaration.prototype.getPropertyValue;
+        CSSStyleDeclaration.prototype.getPropertyValue = function(prop) {
+            if (prop === 'font-family' && _cssMap.has(this)) return _cssMap.get(this);
+            return _origGPV.call(this, prop);
+        };
+
+        // 3d. cssText setter — only touch font-family declarations inside the CSS
+        var _ctDesc = Object.getOwnPropertyDescriptor(CSSStyleDeclaration.prototype, 'cssText');
+        if (_ctDesc && _ctDesc.set) {
+            Object.defineProperty(CSSStyleDeclaration.prototype, 'cssText', {
+                get: function() { return _ctDesc.get.call(this); },
+                set: function(v) {
+                    _ctDesc.set.call(this, typeof v === 'string' ? stripFromCSS(v) : v);
+                },
+                configurable: true, enumerable: true
+            });
+        }
+
+        // ================================================================
+        // 4. Element.setAttribute — catch inline style="font-family: ..."
+        // ================================================================
+        var _origSetAttr = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function(name, value) {
+            if (name.toLowerCase() === 'style' && typeof value === 'string' && containsHidden(value)) {
+                value = stripFromCSS(value);
+            }
+            return _origSetAttr.call(this, name, value);
+        };
+
+        // ================================================================
+        // 5. @font-face CSS injection — Shadow every hidden system font
+        //    with a non-existent local source. This is the NUCLEAR OPTION:
+        //    regardless of HOW font-family is applied (CSS class, <style>,
+        //    external stylesheet), the browser will fail to load the font
+        //    and fall back, producing identical metrics to the fallback.
+        // ================================================================
+        function injectFontFaceOverrides() {
+            var target = document.head || document.documentElement;
+            if (!target) return;
+            var style = document.createElement('style');
+            style.setAttribute('data-fg', '1');
+            var css = '';
+            for (var i = 0; i < config.fonts_hidden.length; i++) {
+                var name = config.fonts_hidden[i];
+                // Use a non-existent local() source to shadow the real system font
+                css += '@font-face{font-family:"' + name + '";src:local("__FG_BLOCK__");}\n';
+                // Also cover unquoted variant
+                css += '@font-face{font-family:' + name + ';src:local("__FG_BLOCK__");}\n';
+            }
+            style.textContent = css;
+            // Prepend so our rules come first (they shadow system fonts regardless of order, 
+            // but being first ensures they're parsed before any page font usage)
+            target.insertBefore(style, target.firstChild);
+        }
+
+        // Inject immediately if DOM is available, otherwise wait
+        function tryInject() {
+            if (document.head) {
+                injectFontFaceOverrides();
+                return true;
+            }
+            if (document.documentElement && document.documentElement.firstChild && document.documentElement.firstChild.nodeName === 'HEAD') {
+                injectFontFaceOverrides();
+                return true;
+            }
+            return false;
+        }
+
+        if (!tryInject()) {
+            var _obs = new MutationObserver(function(mutations, obs) {
+                if (tryInject()) {
+                    obs.disconnect();
+                }
+            });
+            _obs.observe(document, { childList: true, subtree: true });
+        }
+
+        // ================================================================
+        // 6. HTMLElement measurement hooks — Last line of defense
+        //    If @font-face override doesn't work in some edge case, intercept
+        //    offsetWidth/offsetHeight/getBoundingClientRect to return fallback
+        //    metrics when hidden fonts are detected in computed style.
+        // ================================================================
+        var _owDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+        var _ohDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+
+        function getFallbackDimension(el, origGetter) {
+            try {
+                var computed = window.getComputedStyle(el);
+                var ff = computed.fontFamily;
+                if (ff && containsHidden(ff)) {
+                    // Temporarily force fallback font via inline style
+                    var saved = _ffDesc ? _ffDesc.get.call(el.style) : el.style.fontFamily;
+                    var cleanFF = stripFamilies(ff);
+                    if (_ffDesc) {
+                        _ffDesc.set.call(el.style, cleanFF);
+                    } else {
+                        el.style.fontFamily = cleanFF;
+                    }
+                    var val = origGetter.call(el);
+                    // Restore
+                    if (_ffDesc) {
+                        _ffDesc.set.call(el.style, saved);
+                    } else {
+                        el.style.fontFamily = saved;
+                    }
+                    return val;
+                }
+            } catch(e) {}
+            return origGetter.call(el);
+        }
+
+        if (_owDesc && _owDesc.get) {
+            Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+                get: function() { return getFallbackDimension(this, _owDesc.get); },
+                configurable: true, enumerable: true
+            });
+        }
+        if (_ohDesc && _ohDesc.get) {
+            Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+                get: function() { return getFallbackDimension(this, _ohDesc.get); },
+                configurable: true, enumerable: true
+            });
+        }
+
+        // getBoundingClientRect
+        var _origGBCR = Element.prototype.getBoundingClientRect;
+        Element.prototype.getBoundingClientRect = function() {
+            try {
+                var computed = window.getComputedStyle(this);
+                var ff = computed.fontFamily;
+                if (ff && containsHidden(ff)) {
+                    var saved = _ffDesc ? _ffDesc.get.call(this.style) : this.style.fontFamily;
+                    var cleanFF = stripFamilies(ff);
+                    if (_ffDesc) {
+                        _ffDesc.set.call(this.style, cleanFF);
+                    } else {
+                        this.style.fontFamily = cleanFF;
+                    }
+                    var rect = _origGBCR.call(this);
+                    if (_ffDesc) {
+                        _ffDesc.set.call(this.style, saved);
+                    } else {
+                        this.style.fontFamily = saved;
+                    }
+                    return rect;
+                }
+            } catch(e) {}
+            return _origGBCR.call(this);
         };
     }
 

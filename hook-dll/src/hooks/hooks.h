@@ -24,6 +24,10 @@ void UninstallFontHooks();
 bool InstallDisplayHooks();
 void UninstallDisplayHooks();
 
+// Proxy hooks
+bool InstallProxyHooks();
+void UninstallProxyHooks();
+
 } // namespace fg
 
 #endif // FG_HOOKS_H

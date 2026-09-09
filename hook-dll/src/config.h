@@ -54,6 +54,9 @@ struct FingerprintProfile {
 
     // User-Agent hint
     std::string ua_hint;
+
+    // Proxy settings (used by proxy_hook.cpp to spoof WinHttp proxy)
+    std::string proxy_server;
 };
 
 // Load the profile from the temp JSON file for the current process

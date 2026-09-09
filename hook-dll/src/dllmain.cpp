@@ -89,6 +89,13 @@ static bool Initialize() {
         DebugLog(L"Display hooks installed");
     }
 
+    if (!InstallProxyHooks()) {
+        DebugLog(L"WARNING: Proxy hooks failed");
+        allOk = false;
+    } else {
+        DebugLog(L"Proxy hooks installed");
+    }
+
     if (allOk) {
         DebugLog(L"All hooks installed successfully!");
     } else {
@@ -105,6 +112,7 @@ static void Shutdown() {
     UninstallLocaleHooks();
     UninstallFontHooks();
     UninstallDisplayHooks();
+    UninstallProxyHooks();
 
     MH_Uninitialize();
 

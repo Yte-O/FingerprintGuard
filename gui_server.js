@@ -26,6 +26,79 @@ const INJECTOR_EXE = path.join(ROOT, 'hook-dll', 'build', 'FGInjector.exe');
 const OVERRIDE_JS  = path.join(ROOT, 'js-inject', 'fingerprint_override.js');
 const CONFIG_FILE  = path.join(ROOT, 'gui_config.json');
 const INSTANCES_FILE = path.join(ROOT, 'instances.json');
+const DLL_ATTACH_PS1 = path.join(ROOT, 'dll_attach.ps1');
+const FGHOOK_DLL     = path.join(ROOT, 'hook-dll', 'build', 'FGHook.dll');
+
+// ---- UWP Helpers -----------------------------------------------------------
+// Detect if a target path is inside the WindowsApps folder (UWP/MSIX app)
+function isUWPApp(target) {
+    return target.toLowerCase().includes('\\windowsapps\\');
+}
+
+// Extract the executable name (without extension) from a full path
+function getProcessName(target) {
+    return path.basename(target, path.extname(target));
+}
+
+// Resolve the AppUserModelId from a WindowsApps path.
+// Path format: ...\WindowsApps\<PackageName>_<Version>_<Arch>__<PublisherId>\...
+// We need: <PackageName>_<PublisherId>!<AppId>
+// AppId is typically the same as the package base name.
+function resolveAppModelId(target) {
+    const lower = target.toLowerCase();
+    const idx = lower.indexOf('\\windowsapps\\');
+    if (idx < 0) return null;
+    const afterWA = target.substring(idx + '\\windowsapps\\'.length);
+    const folderName = afterWA.split('\\')[0]; // e.g. Claude_1.49585.0.0_x64__pzs8sxrjxfjjc
+    const parts = folderName.split('_');
+    if (parts.length < 4) return null;
+    const packageName = parts[0]; // e.g. Claude or OpenAI.Codex
+    const publisherId = parts[parts.length - 1]; // e.g. pzs8sxrjxfjjc
+    const familyName = `${packageName}_${publisherId}`;
+    // AppId: Try to match the package name's last segment (after dots)
+    const appIdGuess = packageName.includes('.') ? packageName.split('.').pop() : packageName;
+    return `${familyName}!${appIdGuess}`;
+}
+
+// Poll for a process by name, returns PID or 0 after timeout
+function pollForProcess(processName, timeoutMs = 15000) {
+    return new Promise((resolve) => {
+        const startTime = Date.now();
+        const interval = setInterval(() => {
+            try {
+                const { execSync } = require('child_process');
+                const out = execSync(
+                    `powershell.exe -NoProfile -Command "(Get-Process -Name '${processName}' -ErrorAction SilentlyContinue | Select-Object -First 1).Id"`,
+                    { encoding: 'utf8', timeout: 5000 }
+                ).trim();
+                const pid = parseInt(out);
+                if (pid > 0) {
+                    clearInterval(interval);
+                    resolve(pid);
+                }
+            } catch (e) { /* not found yet */ }
+            if (Date.now() - startTime > timeoutMs) {
+                clearInterval(interval);
+                resolve(0);
+            }
+        }, 500);
+    });
+}
+
+// Inject FGHook.dll into a running process using dll_attach.ps1
+function attachDll(pid, dllPath) {
+    return new Promise((resolve) => {
+        const { execFile } = require('child_process');
+        execFile('powershell.exe',
+            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DLL_ATTACH_PS1, '-PID', String(pid), '-DllPath', dllPath],
+            { encoding: 'utf8', timeout: 15000 },
+            (err, stdout, stderr) => {
+                const output = ((stdout || '') + (stderr || '')).trim();
+                resolve({ success: output.startsWith('OK:'), output });
+            }
+        );
+    });
+}
 
 // ---- State -----------------------------------------------------------------
 let savedConfig = {};
@@ -169,13 +242,128 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
         injArgs.push(`--proxy-server=${finalProxyStr}`);
     }
 
+    let webview2Args = `--remote-debugging-port=${port} --remote-allow-origins=*`;
+    if (finalProxyStr) webview2Args += ` --proxy-server=${finalProxyStr}`;
+    if (profile.languages && profile.languages.length) webview2Args += ` --accept-lang=${profile.languages.join(',')}`;
+
     const env = {
         ...process.env,
         TZ: profile.timezone,
-        LANG: profile.locale,
-        FG_CONFIG_PATH: tempConfigPath
+        LANG: 'zh-CN', // Force OS locale variable to Chinese for the UI
+        FG_CONFIG_PATH: tempConfigPath,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: webview2Args
     };
 
+    const isUWP = isUWPApp(target);
+
+    // ========================================================================
+    // PATH A: UWP/MSIX apps (e.g. Claude, apps inside WindowsApps)
+    // Strategy: Launch via shell:AppsFolder -> poll for process -> attach DLL
+    // ========================================================================
+    if (isUWP) {
+        const appModelId = resolveAppModelId(target);
+        const procName = getProcessName(target);
+        console.log(`[UWP] Detected UWP app: ${procName}, AppModelId: ${appModelId}`);
+
+        // Create the instance record immediately (status: launching)
+        const instance = {
+            id, pid: 0, target, country: countryCode,
+            countryName: profile.country_name,
+            proxy: finalProxyStr || 'none',
+            proxyHost, proxyPort, proxyUser, proxyPass,
+            debugPort: port,
+            startTime: new Date().toISOString(),
+            status: 'launching (UWP)',
+            tempConfig: tempConfigPath,
+            chromeProfileDir,
+            localProxyServer,
+            output: ''
+        };
+        if (existingInst) {
+            Object.assign(existingInst, instance);
+        } else {
+            instances.push(instance);
+        }
+        saveInstances();
+        saveConfig({ lastTarget: target, lastProxyHost: proxyHost || '', lastProxyPort: proxyPort || '', lastProxyUser: proxyUser || '', lastProxyPass: proxyPass || '', lastCountry: countryCode });
+
+        // Launch asynchronously, don't block the HTTP response
+        (async () => {
+            try {
+                // Step 1: Launch via shell:AppsFolder (the only way UWP apps accept activation)
+                if (appModelId) {
+                    console.log(`[UWP] Launching via shell:AppsFolder\\${appModelId}`);
+                    const { execSync } = require('child_process');
+                    execSync(`explorer.exe "shell:AppsFolder\\${appModelId}"`, { timeout: 10000 });
+                } else {
+                    // Fallback: try direct launch without DLL injection first
+                    console.log(`[UWP] No AppModelId resolved, trying direct launch...`);
+                    spawn(target, [], { stdio: 'ignore', detached: true, env }).unref();
+                }
+
+                // Step 2: Wait for the process to appear
+                console.log(`[UWP] Polling for process: ${procName}...`);
+                const pid = await pollForProcess(procName, 20000);
+                if (pid === 0) {
+                    console.log(`[UWP] ERROR: Process ${procName} did not appear within 20s`);
+                    instance.status = 'error';
+                    instance.output = `Process ${procName} did not start within 20 seconds`;
+                    saveInstances();
+                    return;
+                }
+
+                console.log(`[UWP] Found process PID: ${pid}`);
+                instance.pid = pid;
+                instance.status = 'injecting DLL...';
+                saveInstances();
+
+                // Step 3: Write the config file for this PID
+                if (finalProxyStr) {
+                    profile.proxyServer = finalProxyStr;
+                }
+                const pidConfigPath = path.join(process.env.TEMP || '.', `fg_${pid}.json`);
+                fs.writeFileSync(pidConfigPath, JSON.stringify(profile, null, 2));
+                console.log(`[UWP] Config written to: ${pidConfigPath}`);
+
+                // Step 4: Wait a moment for the app to fully initialize, then inject DLL
+                await new Promise(r => setTimeout(r, 2000));
+
+                if (fs.existsSync(FGHOOK_DLL) && fs.existsSync(DLL_ATTACH_PS1)) {
+                    console.log(`[UWP] Injecting FGHook.dll into PID ${pid}...`);
+                    const result = await attachDll(pid, FGHOOK_DLL);
+                    console.log(`[UWP] Injection result: ${result.output}`);
+
+                    if (result.success) {
+                        instance.status = 'running (DLL hooked)';
+                        instance.output = result.output;
+                    } else {
+                        instance.status = 'running (DLL failed)';
+                        instance.output = result.output;
+                    }
+                } else {
+                    instance.status = 'running (no DLL)';
+                    instance.output = 'FGHook.dll or dll_attach.ps1 not found';
+                }
+
+                saveInstances();
+
+                // Step 5: Try CDP connection (Electron apps may have debug port if ELECTRON_ADDITIONAL_CHROMIUM_FLAGS is set)
+                setTimeout(() => tryCDPInject(id, port, profile), 3000);
+
+            } catch (e) {
+                console.log(`[UWP] Launch error: ${e.message}`);
+                instance.status = 'error';
+                instance.output = e.message;
+                saveInstances();
+            }
+        })();
+
+        return instance;
+    }
+
+    // ========================================================================
+    // PATH B: Standard exe (with DLL injector creating the process SUSPENDED)
+    // ========================================================================
     return new Promise((resolve) => {
         if (!isBrowser && fs.existsSync(INJECTOR_EXE)) {
             execFile(INJECTOR_EXE, injArgs, { encoding: 'utf8', timeout: 15000, env }, (err, stdout, stderr) => {
@@ -217,14 +405,20 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
                 electronArgs.push(`--user-data-dir=${chromeProfileDir}`);
                 electronArgs.push('--no-first-run');
                 electronArgs.push('--no-default-browser-check');
-                if (profile.locale) electronArgs.push(`--lang=${profile.locale}`);
+                electronArgs.push(`--lang=zh-CN`);
                 if (profile.languages && profile.languages.length) {
                     electronArgs.push(`--accept-lang=${profile.languages.join(',')}`);
                 }
             }
             if (finalProxyStr) electronArgs.push(`--proxy-server=${finalProxyStr}`);
 
-            const child = spawn(target, electronArgs, { stdio: 'ignore', detached: true, env });
+            const isShellScript = lowerTarget.endsWith('.lnk') || lowerTarget.endsWith('.bat') || lowerTarget.endsWith('.cmd');
+            const child = spawn(target, electronArgs, { 
+                stdio: 'ignore', 
+                detached: true, 
+                env,
+                shell: isShellScript 
+            });
             child.unref();
 
             const instance = {
@@ -270,18 +464,46 @@ async function tryCDPInject(instanceId, port, profile) {
             canvas_seed: profile.canvas_seed || Math.floor(Math.random() * 1000000), // Fallback if missing
             resolution: profile.resolution,
             ua_hint: profile.ua_hint,
-            fonts_hidden: (profile.country === 'CN' || profile.country === 'TW') ? [] : [
+            fonts_hidden: (profile.country === 'CN' || profile.country === 'TW' || profile.country === 'JP' || profile.country === 'KR') ? [] : [
+                // Simplified Chinese (Windows)
                 "Microsoft YaHei", "Microsoft YaHei UI", "SimSun", "NSimSun",
-                "PingFang SC", "SimHei", "STHeiti", "STKaiti", "Microsoft JhengHei"
+                "SimHei", "FangSong", "KaiTi", "DengXian", "SimSun-ExtB", "SimKai",
+                // Simplified Chinese (macOS)
+                "PingFang SC", "Heiti SC", "STHeiti", "STKaiti", "STSong",
+                "STFangsong", "STXihei", "STZhongsong",
+                // Traditional Chinese
+                "Microsoft JhengHei", "Microsoft JhengHei UI", "MingLiU",
+                "PMingLiU", "MingLiU-ExtB", "PMingLiU-ExtB", "DFKai-SB",
+                "PingFang TC", "PingFang HK", "Heiti TC",
+                // Japanese
+                "MS Gothic", "MS PGothic", "MS UI Gothic", "MS Mincho", "MS PMincho",
+                "Yu Gothic", "Yu Gothic UI", "Yu Mincho", "Meiryo", "Meiryo UI",
+                "Hiragino Sans", "Hiragino Kaku Gothic Pro",
+                // Korean
+                "Malgun Gothic", "Gulim", "GulimChe", "Dotum", "DotumChe",
+                "Batang", "BatangChe", "Gungsuh", "GungsuhChe",
+                "Apple SD Gothic Neo",
+                // Cross-platform CJK
+                "Source Han Sans SC", "Source Han Serif SC", "Noto Sans CJK SC",
+                "Noto Serif CJK SC", "WenQuanYi Micro Hei", "WenQuanYi Zen Hei",
+                "AR PL UKai", "AR PL UMing", "LiSu", "YouYuan"
             ]
         };
         const script = overrideJs.replace('__FG_CONFIG__', JSON.stringify(jsConfig));
 
-        // Get browser websocket endpoint
-        const versionData = JSON.parse(await httpGet(`http://127.0.0.1:${port}/json/version`));
-        const browserWsUrl = versionData.webSocketDebuggerUrl;
-        if (browserWsUrl) {
-            setupBrowserCDP(browserWsUrl, script, jsConfig, inst);
+        // Get browser websocket endpoint with retries
+        let versionData = null;
+        for (let i = 0; i < 15; i++) {
+            try {
+                versionData = JSON.parse(await httpGet(`http://127.0.0.1:${port}/json/version`));
+                break;
+            } catch (err) {
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+        
+        if (versionData && versionData.webSocketDebuggerUrl) {
+            setupBrowserCDP(versionData.webSocketDebuggerUrl, script, jsConfig, inst);
         }
     } catch (e) {
         // CDP not available or failed
@@ -311,8 +533,8 @@ function setupBrowserCDP(browserWsUrl, script, jsConfig, inst) {
             const msg = JSON.parse(data);
             if (msg.method === 'Target.attachedToTarget') {
                 const { sessionId, targetInfo } = msg.params;
-                if (targetInfo.type === 'page') {
-                    // Send Emulation commands to this specific page
+                if (targetInfo.type === 'page' || targetInfo.type === 'iframe') {
+                    // Send Emulation commands to this specific page/iframe
                     sendCmd('Emulation.setTimezoneOverride', { timezoneId: jsConfig.timezone_iana }, sessionId);
                     sendCmd('Emulation.setLocaleOverride', { locale: jsConfig.locale }, sessionId);
                     sendCmd('Emulation.setUserAgentOverride', { 
@@ -322,7 +544,7 @@ function setupBrowserCDP(browserWsUrl, script, jsConfig, inst) {
                     // Inject JS overrides
                     sendCmd('Page.addScriptToEvaluateOnNewDocument', { source: script }, sessionId);
                     
-                    // Resume the paused page
+                    // Resume the paused target
                     sendCmd('Runtime.runIfWaitingForDebugger', {}, sessionId);
                 } else {
                     // Resume non-page targets immediately

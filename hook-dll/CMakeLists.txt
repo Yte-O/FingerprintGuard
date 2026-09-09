@@ -28,6 +28,7 @@ add_library(FGHook SHARED
     src/hooks/locale_hook.cpp
     src/hooks/font_hook.cpp
     src/hooks/display_hook.cpp
+    src/hooks/proxy_hook.cpp
 )
 
 target_include_directories(FGHook PRIVATE
