@@ -83,24 +83,27 @@ function resolveAppModelId(target) {
 function pollForProcess(processName, timeoutMs = 15000) {
     return new Promise((resolve) => {
         const startTime = Date.now();
-        const interval = setInterval(() => {
-            try {
-                const { execSync } = require('child_process');
-                const out = execSync(
-                    `powershell.exe -NoProfile -Command "(Get-Process -Name '${processName}' -ErrorAction SilentlyContinue | Select-Object -First 1).Id"`,
-                    { encoding: 'utf8', timeout: 5000 }
-                ).trim();
-                const pid = parseInt(out);
-                if (pid > 0) {
-                    clearInterval(interval);
-                    resolve(pid);
+        const exeName = processName.toLowerCase().endsWith('.exe') ? processName : `${processName}.exe`;
+        const { execFile } = require('child_process');
+
+        const check = () => {
+            execFile('tasklist.exe', ['/FI', `IMAGENAME eq ${exeName}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 3000 }, (err, stdout) => {
+                if (!err && stdout) {
+                    const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+                    for (const line of lines) {
+                        const parts = line.split(',');
+                        if (parts.length >= 2) {
+                            const rawPid = parts[1].replace(/"/g, '').trim();
+                            const pid = parseInt(rawPid, 10);
+                            if (pid > 0) return resolve(pid);
+                        }
+                    }
                 }
-            } catch (e) { /* not found yet */ }
-            if (Date.now() - startTime > timeoutMs) {
-                clearInterval(interval);
-                resolve(0);
-            }
-        }, 500);
+                if (Date.now() - startTime > timeoutMs) return resolve(0);
+                setTimeout(check, 500);
+            });
+        };
+        check();
     });
 }
 
@@ -109,7 +112,7 @@ function attachDll(pid, dllPath) {
     return new Promise((resolve) => {
         const { execFile } = require('child_process');
         execFile('powershell.exe',
-            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DLL_ATTACH_PS1, '-PID', String(pid), '-DllPath', dllPath],
+            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', DLL_ATTACH_PS1, '-ProcessId', String(pid), '-DllPath', dllPath],
             { encoding: 'utf8', timeout: 15000 },
             (err, stdout, stderr) => {
                 const output = ((stdout || '') + (stderr || '')).trim();
@@ -117,6 +120,75 @@ function attachDll(pid, dllPath) {
             }
         );
     });
+}
+
+async function launchUWPFallback(id, target, profile, countryCode, finalProxyStr, proxyHost, proxyPort, proxyUser, proxyPass, port, tempConfigPath, chromeProfileDir, localProxyServer, existingInst, env) {
+    const appModelId = resolveAppModelId(target);
+    const procName = getProcessName(target);
+    console.log(`[UWP] Launching via UWP fallback: ${procName}, AppModelId: ${appModelId}`);
+
+    const instance = {
+        id, pid: 0, target, country: countryCode,
+        countryName: profile.country_name,
+        proxy: finalProxyStr || 'none',
+        proxyHost, proxyPort, proxyUser, proxyPass,
+        debugPort: port,
+        startTime: new Date().toISOString(),
+        status: 'launching (UWP)',
+        tempConfig: tempConfigPath,
+        chromeProfileDir,
+        localProxyServer,
+        output: ''
+    };
+    if (existingInst) Object.assign(existingInst, instance);
+    else instances.push(instance);
+    saveInstances();
+
+    (async () => {
+        try {
+            if (appModelId) {
+                spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process 'shell:AppsFolder\\${appModelId}'`], {
+                    stdio: 'ignore', detached: true
+                }).unref();
+            } else {
+                spawn(target, [], { stdio: 'ignore', detached: true, env }).unref();
+            }
+
+            const pid = await pollForProcess(procName, 15000);
+            if (pid === 0) {
+                instance.status = 'error';
+                instance.output = `Process ${procName} did not start within 15 seconds`;
+                saveInstances();
+                return;
+            }
+
+            instance.pid = pid;
+            instance.status = 'injecting DLL...';
+            saveInstances();
+
+            const pidConfigPath = path.join(process.env.TEMP || '.', `fg_${pid}.json`);
+            fs.writeFileSync(pidConfigPath, JSON.stringify(profile, null, 2));
+
+            await new Promise(r => setTimeout(r, 1500));
+
+            if (fs.existsSync(FGHOOK_DLL) && fs.existsSync(DLL_ATTACH_PS1)) {
+                const result = await attachDll(pid, FGHOOK_DLL);
+                instance.status = result.success ? 'running (DLL hooked)' : 'running (DLL failed)';
+                instance.output = result.output;
+            } else {
+                instance.status = 'running (no DLL)';
+                instance.output = 'FGHook.dll or dll_attach.ps1 not found';
+            }
+            saveInstances();
+            setTimeout(() => tryCDPInject(id, port, profile), 3000);
+        } catch (e) {
+            instance.status = 'error';
+            instance.output = e.message;
+            saveInstances();
+        }
+    })();
+
+    return instance;
 }
 
 // ---- State -----------------------------------------------------------------
@@ -243,10 +315,18 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
         }
     }
 
+    if (finalProxyStr) {
+        profile.proxyServer = finalProxyStr;
+        fs.writeFileSync(tempConfigPath, JSON.stringify(profile, null, 2));
+    }
+
     const injArgs = [target, tempConfigPath, '--'];
     injArgs.push(`--remote-debugging-port=${port}`);
     injArgs.push('--remote-allow-origins=*');
-    
+    if (finalProxyStr) {
+        injArgs.push(`--proxy-server=${finalProxyStr}`);
+    }
+
     const lowerTarget = target.toLowerCase();
     const isBrowser = lowerTarget.includes('chrome.exe') || lowerTarget.includes('msedge.exe') || lowerTarget.includes('brave.exe');
 
@@ -255,10 +335,6 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
         injArgs.push(`--user-data-dir=${chromeProfileDir}`);
         injArgs.push('--no-first-run');
         injArgs.push('--no-default-browser-check');
-    }
-
-    if (finalProxyStr) {
-        injArgs.push(`--proxy-server=${finalProxyStr}`);
     }
 
     let webview2Args = `--remote-debugging-port=${port} --remote-allow-origins=*`;
@@ -273,154 +349,80 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: webview2Args
     };
 
-    const isUWP = isUWPApp(target);
-
-    // ========================================================================
-    // PATH A: UWP/MSIX apps (e.g. Claude, apps inside WindowsApps)
-    // Strategy: Launch via shell:AppsFolder -> poll for process -> attach DLL
-    // ========================================================================
-    if (isUWP) {
-        const appModelId = resolveAppModelId(target);
-        const procName = getProcessName(target);
-        console.log(`[UWP] Detected UWP app: ${procName}, AppModelId: ${appModelId}`);
-
-        // Create the instance record immediately (status: launching)
-        const instance = {
-            id, pid: 0, target, country: countryCode,
-            countryName: profile.country_name,
-            proxy: finalProxyStr || 'none',
-            proxyHost, proxyPort, proxyUser, proxyPass,
-            debugPort: port,
-            startTime: new Date().toISOString(),
-            status: 'launching (UWP)',
-            tempConfig: tempConfigPath,
-            chromeProfileDir,
-            localProxyServer,
-            output: ''
-        };
-        if (existingInst) {
-            Object.assign(existingInst, instance);
-        } else {
-            instances.push(instance);
-        }
-        saveInstances();
-        saveConfig({ lastTarget: target, lastProxyHost: proxyHost || '', lastProxyPort: proxyPort || '', lastProxyUser: proxyUser || '', lastProxyPass: proxyPass || '', lastCountry: countryCode });
-
-        // Launch asynchronously, don't block the HTTP response
-        (async () => {
-            try {
-                // Step 1: Launch via shell:AppsFolder (the only way UWP apps accept activation)
-                if (appModelId) {
-                    console.log(`[UWP] Launching via shell:AppsFolder\\${appModelId}`);
-                    // Launch via PowerShell Start-Process so explorer.exe exit code never throws or blocks
-                    spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process 'shell:AppsFolder\\${appModelId}'`], {
-                        stdio: 'ignore',
-                        detached: true
-                    }).unref();
-                } else {
-                    // Fallback: try direct launch without DLL injection first
-                    console.log(`[UWP] No AppModelId resolved, trying direct launch...`);
-                    spawn(target, [], { stdio: 'ignore', detached: true, env }).unref();
-                }
-
-                // Step 2: Wait for the process to appear
-                console.log(`[UWP] Polling for process: ${procName}...`);
-                const pid = await pollForProcess(procName, 20000);
-                if (pid === 0) {
-                    console.log(`[UWP] ERROR: Process ${procName} did not appear within 20s`);
-                    instance.status = 'error';
-                    instance.output = `Process ${procName} did not start within 20 seconds`;
-                    saveInstances();
-                    return;
-                }
-
-                console.log(`[UWP] Found process PID: ${pid}`);
-                instance.pid = pid;
-                instance.status = 'injecting DLL...';
-                saveInstances();
-
-                // Step 3: Write the config file for this PID
-                if (finalProxyStr) {
-                    profile.proxyServer = finalProxyStr;
-                }
-                const pidConfigPath = path.join(process.env.TEMP || '.', `fg_${pid}.json`);
-                fs.writeFileSync(pidConfigPath, JSON.stringify(profile, null, 2));
-                console.log(`[UWP] Config written to: ${pidConfigPath}`);
-
-                // Step 4: Wait a moment for the app to fully initialize, then inject DLL
-                await new Promise(r => setTimeout(r, 2000));
-
-                if (fs.existsSync(FGHOOK_DLL) && fs.existsSync(DLL_ATTACH_PS1)) {
-                    console.log(`[UWP] Injecting FGHook.dll into PID ${pid}...`);
-                    const result = await attachDll(pid, FGHOOK_DLL);
-                    console.log(`[UWP] Injection result: ${result.output}`);
-
-                    if (result.success) {
-                        instance.status = 'running (DLL hooked)';
-                        instance.output = result.output;
-                    } else {
-                        instance.status = 'running (DLL failed)';
-                        instance.output = result.output;
-                    }
-                } else {
-                    instance.status = 'running (no DLL)';
-                    instance.output = 'FGHook.dll or dll_attach.ps1 not found';
-                }
-
-                saveInstances();
-
-                // Step 5: Try CDP connection (Electron apps may have debug port if ELECTRON_ADDITIONAL_CHROMIUM_FLAGS is set)
-                setTimeout(() => tryCDPInject(id, port, profile), 3000);
-
-            } catch (e) {
-                console.log(`[UWP] Launch error: ${e.message}`);
-                instance.status = 'error';
-                instance.output = e.message;
-                saveInstances();
-            }
-        })();
-
-        return instance;
+    // Ensure FGHook.dll has ALL APPLICATION PACKAGES permission
+    if (fs.existsSync(FGHOOK_DLL)) {
+        try {
+            const { execSync } = require('child_process');
+            execSync(`icacls "${FGHOOK_DLL}" /grant "*S-1-15-2-1:(RX)" "*S-1-15-2-2:(RX)"`, { stdio: 'ignore' });
+        } catch (e) {}
     }
 
     // ========================================================================
-    // PATH B: Standard exe (with DLL injector creating the process SUSPENDED)
+    // PRIMARY PATH: Standard / WindowsApps exe with FGInjector.exe
     // ========================================================================
-    return new Promise((resolve) => {
-        if (!isBrowser && fs.existsSync(INJECTOR_EXE)) {
+    if (!isBrowser && fs.existsSync(INJECTOR_EXE)) {
+        return new Promise((resolve) => {
             execFile(INJECTOR_EXE, injArgs, { encoding: 'utf8', timeout: 15000, env }, (err, stdout, stderr) => {
                 const output = (stdout || '') + (stderr || '');
                 const pidMatch = output.match(/PID:\s*(\d+)/);
                 const pid = pidMatch ? parseInt(pidMatch[1]) : 0;
 
-                const instance = {
-                    id, pid, target, country: countryCode,
-                    countryName: profile.country_name,
-                    proxy: finalProxyStr || 'none',
-                    proxyHost, proxyPort, proxyUser, proxyPass,
-                    debugPort: port,
-                    startTime: new Date().toISOString(),
-                    status: err ? 'error' : 'running',
-                    tempConfig: tempConfigPath,
-                    chromeProfileDir,
-                    localProxyServer,
-                    output: output.trim()
-                };
-                if (existingInst) {
-                    Object.assign(existingInst, instance);
-                } else {
-                    instances.push(instance);
-                }
-                saveInstances();
-
-                if (!err) {
+                if (!err && pid > 0) {
+                    const instance = {
+                        id, pid, target, country: countryCode,
+                        countryName: profile.country_name,
+                        proxy: finalProxyStr || 'none',
+                        proxyHost, proxyPort, proxyUser, proxyPass,
+                        debugPort: port,
+                        startTime: new Date().toISOString(),
+                        status: 'running',
+                        tempConfig: tempConfigPath,
+                        chromeProfileDir,
+                        localProxyServer,
+                        output: output.trim()
+                    };
+                    if (existingInst) {
+                        Object.assign(existingInst, instance);
+                    } else {
+                        instances.push(instance);
+                    }
+                    saveInstances();
                     setTimeout(() => tryCDPInject(id, port, profile), 3000);
+                    saveConfig({ lastTarget: target, lastProxyHost: proxyHost || '', lastProxyPort: proxyPort || '', lastProxyUser: proxyUser || '', lastProxyPass: proxyPass || '', lastCountry: countryCode });
+                    return resolve(instance);
                 }
 
-                saveConfig({ lastTarget: target, lastProxyHost: proxyHost || '', lastProxyPort: proxyPort || '', lastProxyUser: proxyUser || '', lastProxyPass: proxyPass || '', lastCountry: countryCode });
-                resolve(instance);
+                // If FGInjector failed and target is a UWP app, fallback to UWP activation
+                if (isUWPApp(target)) {
+                    console.log(`[UWP] FGInjector direct launch failed, attempting shell activation...`);
+                    resolve(launchUWPFallback(id, target, profile, countryCode, finalProxyStr, proxyHost, proxyPort, proxyUser, proxyPass, port, tempConfigPath, chromeProfileDir, localProxyServer, existingInst, env));
+                } else {
+                    const instance = {
+                        id, pid: 0, target, country: countryCode,
+                        countryName: profile.country_name,
+                        proxy: finalProxyStr || 'none',
+                        proxyHost, proxyPort, proxyUser, proxyPass,
+                        debugPort: port,
+                        startTime: new Date().toISOString(),
+                        status: 'error',
+                        tempConfig: tempConfigPath,
+                        chromeProfileDir,
+                        localProxyServer,
+                        output: output.trim() || (err ? err.message : 'Unknown launch error')
+                    };
+                    if (existingInst) Object.assign(existingInst, instance);
+                    else instances.push(instance);
+                    saveInstances();
+                    resolve(instance);
+                }
             });
-        } else {
+        });
+    }
+
+    // ========================================================================
+    // SECONDARY PATH: Browser or shell scripts
+    // ========================================================================
+    return new Promise((resolve) => {
             const electronArgs = [`--remote-debugging-port=${port}`, '--remote-allow-origins=*'];
             if (isBrowser) {
                 if (!chromeProfileDir) chromeProfileDir = path.join(process.env.TEMP || '.', `fg_chrome_profile_${id}`);
@@ -464,7 +466,6 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
             setTimeout(() => tryCDPInject(id, port, profile), 3000);
             saveConfig({ lastTarget: target, lastProxyHost: proxyHost || '', lastProxyPort: proxyPort || '', lastProxyUser: proxyUser || '', lastProxyPass: proxyPass || '', lastCountry: countryCode });
             resolve(instance);
-        }
     });
 }
 

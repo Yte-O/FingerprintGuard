@@ -4,7 +4,7 @@
 # Usage: powershell -ExecutionPolicy Bypass -File dll_attach.ps1 -PID <pid> -DllPath <path>
 # ============================================================================
 param(
-    [Parameter(Mandatory=$true)][int]$PID,
+    [Parameter(Mandatory=$true)][int]$ProcessId,
     [Parameter(Mandatory=$true)][string]$DllPath
 )
 
@@ -104,5 +104,5 @@ public static class FGAttach {
 
 Add-Type -TypeDefinition $code
 
-$result = [FGAttach]::Inject($PID, $DllPath)
+$result = [FGAttach]::Inject($ProcessId, $DllPath)
 Write-Output $result
