@@ -222,7 +222,7 @@ int wmain(int argc, wchar_t* argv[]) {
     if (argc < 3) {
         std::wcout << L"Usage: FGInjector.exe <target.exe> <config.json> [--dll <FGHook.dll>] [-- extra args...]" << std::endl;
         std::wcout << L"\nExample:" << std::endl;
-        std::wcout << L"  FGInjector.exe \"C:\\Users\\P\\AppData\\Local\\Programs\\cursor\\Cursor.exe\" profile_jp.json" << std::endl;
+        std::wcout << L"  FGInjector.exe \"C:\\Users\\Username\\AppData\\Local\\Programs\\cursor\\Cursor.exe\" profile_jp.json" << std::endl;
         std::wcout << L"  FGInjector.exe \"C:\\...\\Claude.exe\" profile_jp.json --dll C:\\path\\to\\FGHook.dll" << std::endl;
         return 1;
     }
