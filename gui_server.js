@@ -122,72 +122,90 @@ function attachDll(pid, dllPath) {
     });
 }
 
-async function launchUWPFallback(id, target, profile, countryCode, finalProxyStr, proxyHost, proxyPort, proxyUser, proxyPass, port, tempConfigPath, chromeProfileDir, localProxyServer, existingInst, env) {
-    const appModelId = resolveAppModelId(target);
-    const procName = getProcessName(target);
-    console.log(`[UWP] Launching via UWP fallback: ${procName}, AppModelId: ${appModelId}`);
+function launchUWPFallback(id, target, profile, countryCode, finalProxyStr, proxyHost, proxyPort, proxyUser, proxyPass, port, tempConfigPath, chromeProfileDir, localProxyServer, existingInst, env) {
+    return new Promise((resolve) => {
+        const appModelId = resolveAppModelId(target);
+        const procName = getProcessName(target);
+        if (!appModelId) {
+            const instance = {
+                id, pid: 0, target, country: countryCode, countryName: profile.country_name, proxy: finalProxyStr || 'none', proxyHost, proxyPort, proxyUser, proxyPass, debugPort: port, startTime: new Date().toISOString(), status: 'error', tempConfig: tempConfigPath, chromeProfileDir, localProxyServer, output: 'Could not resolve UWP AppModelId'
+            };
+            if (existingInst) Object.assign(existingInst, instance);
+            else instances.push(instance);
+            saveInstances();
+            return resolve(instance);
+        }
 
-    const instance = {
-        id, pid: 0, target, country: countryCode,
-        countryName: profile.country_name,
-        proxy: finalProxyStr || 'none',
-        proxyHost, proxyPort, proxyUser, proxyPass,
-        debugPort: port,
-        startTime: new Date().toISOString(),
-        status: 'launching (UWP)',
-        tempConfig: tempConfigPath,
-        chromeProfileDir,
-        localProxyServer,
-        output: ''
-    };
-    if (existingInst) Object.assign(existingInst, instance);
-    else instances.push(instance);
-    saveInstances();
+        const instance = {
+            id, pid: 0, target, country: countryCode, countryName: profile.country_name, proxy: finalProxyStr || 'none', proxyHost, proxyPort, proxyUser, proxyPass, debugPort: port, startTime: new Date().toISOString(), status: 'launching (UWP)', tempConfig: tempConfigPath, chromeProfileDir, localProxyServer, output: ''
+        };
+        if (existingInst) Object.assign(existingInst, instance);
+        else instances.push(instance);
+        saveInstances();
 
-    (async () => {
-        try {
-            let args = [`--remote-debugging-port=${port}`, `--remote-allow-origins=*`];
-            if (finalProxyStr) args.push(`--proxy-server=${finalProxyStr}`);
-            if (profile.languages && profile.languages.length) args.push(`--accept-lang=${profile.languages.join(',')}`);
+        (async () => {
+            try {
+                // To pass arguments to WebView2 inside UWP, we must temporarily set the user environment variable
+                let webview2Args = `--remote-debugging-port=${port} --remote-allow-origins=*`;
+                if (finalProxyStr) webview2Args += ` --proxy-server=${finalProxyStr}`;
+                if (profile.languages && profile.languages.length) webview2Args += ` --accept-lang=${profile.languages.join(',')}`;
 
-            if (appModelId) {
-                const argStr = args.map(a => `'${a}'`).join(',');
-                spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process 'shell:AppsFolder\\${appModelId}' -ArgumentList ${argStr}`], {
+                const psCommand = `
+                    [Environment]::SetEnvironmentVariable('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', '${webview2Args}', 'User');
+                    Start-Process 'shell:AppsFolder\\${appModelId}';
+                    Start-Sleep -Seconds 3;
+                    [Environment]::SetEnvironmentVariable('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', $null, 'User');
+                `;
+
+                console.log(`[UWP] Launching via shell:AppsFolder\\${appModelId} and injecting environment variables...`);
+                spawn('powershell.exe', ['-NoProfile', '-Command', psCommand], {
                     stdio: 'ignore', detached: true
                 }).unref();
-            } else {
-                spawn(target, args, { stdio: 'ignore', detached: true, env }).unref();
-            }
 
-            const pid = await pollForProcess(procName, 15000);
-            if (pid === 0) {
-                instance.status = 'error';
-                instance.output = `Process ${procName} did not start within 15 seconds`;
+                // Wait for the process to appear
+                console.log(`[UWP] Polling for process: ${procName}...`);
+                const pid = await pollForProcess(procName, 20000);
+                if (pid === 0) {
+                    console.log(`[UWP] ERROR: Process ${procName} did not appear within 20s`);
+                    instance.status = 'error';
+                    instance.output = `Process ${procName} did not start within 20 seconds. If it's a tray app, it might be hiding.`;
+                    saveInstances();
+                    return resolve(instance);
+                }
+
+                console.log(`[UWP] Found process PID: ${pid}`);
+                instance.pid = pid;
+                instance.status = 'injecting DLL...';
                 saveInstances();
-                return;
-            }
 
-            instance.pid = pid;
-            instance.status = 'injecting DLL...';
-            saveInstances();
+                if (finalProxyStr) profile.proxyServer = finalProxyStr;
+                const pidConfigPath = path.join(process.env.TEMP || '.', `fg_${pid}.json`);
+                fs.writeFileSync(pidConfigPath, JSON.stringify(profile, null, 2));
 
-            const pidConfigPath = path.join(process.env.TEMP || '.', `fg_${pid}.json`);
-            fs.writeFileSync(pidConfigPath, JSON.stringify(profile, null, 2));
+                await new Promise(r => setTimeout(r, 2000));
 
-            await new Promise(r => setTimeout(r, 1500));
+                if (fs.existsSync(FGHOOK_DLL) && fs.existsSync(DLL_ATTACH_PS1)) {
+                    console.log(`[UWP] Injecting FGHook.dll into PID ${pid}...`);
+                    const result = await attachDll(pid, FGHOOK_DLL);
+                    if (result.success) {
+                        instance.status = 'running (DLL hooked)';
+                        instance.output = result.output;
+                    } else {
+                        instance.status = 'running (DLL failed)';
+                        instance.output = result.output;
+                    }
+                } else {
+                    instance.status = 'running (no DLL)';
+                }
+                saveInstances();
 
-            if (fs.existsSync(FGHOOK_DLL) && fs.existsSync(DLL_ATTACH_PS1)) {
-                const result = await attachDll(pid, FGHOOK_DLL);
-                instance.status = result.success ? 'running (DLL hooked)' : 'running (DLL failed)';
-                instance.output = result.output;
-            } else {
-                instance.status = 'running (no DLL)';
-                instance.output = 'FGHook.dll or dll_attach.ps1 not found';
-            }
-            saveInstances();
-            setTimeout(() => tryCDPInject(id, port, profile), 3000);
-        } catch (e) {
-            instance.status = 'error';
+                // Start attempting CDP injection. For tray apps, this might take a while if the UI isn't open yet.
+                setTimeout(() => tryCDPInject(id, port, profile), 3000);
+
+                resolve(instance);
+            } catch (e) {
+                console.log(`[UWP] Launch error: ${e.message}`);
+                instance.status = 'error';
             instance.output = e.message;
             saveInstances();
         }
