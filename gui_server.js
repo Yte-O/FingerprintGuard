@@ -146,12 +146,17 @@ async function launchUWPFallback(id, target, profile, countryCode, finalProxyStr
 
     (async () => {
         try {
+            let args = [`--remote-debugging-port=${port}`, `--remote-allow-origins=*`];
+            if (finalProxyStr) args.push(`--proxy-server=${finalProxyStr}`);
+            if (profile.languages && profile.languages.length) args.push(`--accept-lang=${profile.languages.join(',')}`);
+
             if (appModelId) {
-                spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process 'shell:AppsFolder\\${appModelId}'`], {
+                const argStr = args.map(a => `'${a}'`).join(',');
+                spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process 'shell:AppsFolder\\${appModelId}' -ArgumentList ${argStr}`], {
                     stdio: 'ignore', detached: true
                 }).unref();
             } else {
-                spawn(target, [], { stdio: 'ignore', detached: true, env }).unref();
+                spawn(target, args, { stdio: 'ignore', detached: true, env }).unref();
             }
 
             const pid = await pollForProcess(procName, 15000);
@@ -349,6 +354,15 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: webview2Args
     };
 
+    if (finalProxyStr) {
+        env.http_proxy = finalProxyStr;
+        env.https_proxy = finalProxyStr;
+        env.all_proxy = finalProxyStr;
+        env.HTTP_PROXY = finalProxyStr;
+        env.HTTPS_PROXY = finalProxyStr;
+        env.ALL_PROXY = finalProxyStr;
+    }
+
     // Ensure FGHook.dll has ALL APPLICATION PACKAGES permission
     if (fs.existsSync(FGHOOK_DLL)) {
         try {
@@ -360,6 +374,11 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
     // ========================================================================
     // PRIMARY PATH: Standard / WindowsApps exe with FGInjector.exe
     // ========================================================================
+    if (isUWPApp(target)) {
+        // UWP Apps must use the fallback (shell:AppsFolder) to launch correctly in their AppContainer
+        return launchUWPFallback(id, target, profile, countryCode, finalProxyStr, proxyHost, proxyPort, proxyUser, proxyPass, port, tempConfigPath, chromeProfileDir, localProxyServer, existingInst, env);
+    }
+
     if (!isBrowser && fs.existsSync(INJECTOR_EXE)) {
         return new Promise((resolve) => {
             execFile(INJECTOR_EXE, injArgs, { encoding: 'utf8', timeout: 15000, env }, (err, stdout, stderr) => {
@@ -392,29 +411,24 @@ async function launchInstance(target, countryCode, proxyHost, proxyPort, proxyUs
                     return resolve(instance);
                 }
 
-                // If FGInjector failed and target is a UWP app, fallback to UWP activation
-                if (isUWPApp(target)) {
-                    console.log(`[UWP] FGInjector direct launch failed, attempting shell activation...`);
-                    resolve(launchUWPFallback(id, target, profile, countryCode, finalProxyStr, proxyHost, proxyPort, proxyUser, proxyPass, port, tempConfigPath, chromeProfileDir, localProxyServer, existingInst, env));
-                } else {
-                    const instance = {
-                        id, pid: 0, target, country: countryCode,
-                        countryName: profile.country_name,
-                        proxy: finalProxyStr || 'none',
-                        proxyHost, proxyPort, proxyUser, proxyPass,
-                        debugPort: port,
-                        startTime: new Date().toISOString(),
-                        status: 'error',
-                        tempConfig: tempConfigPath,
-                        chromeProfileDir,
-                        localProxyServer,
-                        output: output.trim() || (err ? err.message : 'Unknown launch error')
-                    };
-                    if (existingInst) Object.assign(existingInst, instance);
-                    else instances.push(instance);
-                    saveInstances();
-                    resolve(instance);
-                }
+                // If FGInjector failed, fallback
+                const instance = {
+                    id, pid: 0, target, country: countryCode,
+                    countryName: profile.country_name,
+                    proxy: finalProxyStr || 'none',
+                    proxyHost, proxyPort, proxyUser, proxyPass,
+                    debugPort: port,
+                    startTime: new Date().toISOString(),
+                    status: 'error',
+                    tempConfig: tempConfigPath,
+                    chromeProfileDir,
+                    localProxyServer,
+                    output: output.trim() || (err ? err.message : 'Unknown launch error')
+                };
+                if (existingInst) Object.assign(existingInst, instance);
+                else instances.push(instance);
+                saveInstances();
+                resolve(instance);
             });
         });
     }

@@ -62,10 +62,12 @@ FingerprintGuard 是一款强大的客户端指纹伪装与代理隔离系统，
 - 拦截底层 `GetTimeZoneInformation`, `GetLocaleInfoW`, `EnumFontFamiliesExW`, `GetSystemMetrics` 等系统 API。
 - 注入环境变量（`TZ`, `LANG`, `LC_ALL`），从进程源头欺骗 V8 引擎与 ICU 国际化库。
 - **WinHTTP 代理拦截 (`proxy_hook.cpp`)**：拦截 `WinHttpGetIEProxyConfigForCurrentUser`，将用户设定的代理服务器强制喂给应用底层 HTTP 客户端，确保桌面应用即使绕过 Chromium 参数也能走指定代理通道。
+- **Node.js 后端代理集成**：自动将 `http_proxy`、`https_proxy` 环境变量注入口令层，确保 Electron 应用（如 Claude）底层的原生 Node.js 请求强制走指定代理。
 
 ### 2. UWP 沙盒动态注入 (`dll_attach.ps1`)
-- 针对受 WindowsApps 沙盒与权限保护的应用，采用基于 `CreateRemoteThread` + `LoadLibraryW` 的跨进程注入机制。
-- 启动应用后自动轮询目标进程 PID，并在 `%TEMP%/fg_<PID>.json` 下发独立配置，实现毫秒级无损挂钩。
+- 针对受 WindowsApps 沙盒与权限保护的应用，优先采用 `shell:AppsFolder` 原生沙盒激活机制。
+- 携带代理与调试端口参数 (`-ArgumentList`) 动态拉起进程，实现无缝传递。
+- 启动应用后自动轮询目标进程 PID，并通过 PowerShell 采用基于 `CreateRemoteThread` + `LoadLibraryW` 的跨进程注入机制下发独立配置与 DLL。
 
 ### 3. JS CDP 注入层 (`js-inject`)
 - 针对 Chromium / Electron 页面，在任何业务代码运行前通过 Chrome DevTools Protocol 注入 `fingerprint_override.js`。
